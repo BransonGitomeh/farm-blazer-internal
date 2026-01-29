@@ -5,15 +5,10 @@ nixPkgs = ["caddy", "binaryen", "rustup", "gcc", "pkg-config", "openssl", "fontc
 cmds = [
     "rustup default stable",
     "rustup target add wasm32-unknown-unknown",
-    # Download wasm-bindgen CLI
     "curl -L https://github.com/rustwasm/wasm-bindgen/releases/download/0.2.106/wasm-bindgen-0.2.106-x86_64-unknown-linux-musl.tar.gz | tar xz",
-    # Build the WASM (Rust produces underscores!)
     "cargo build --release --target wasm32-unknown-unknown",
-    # Generate bindings (Input is farm_blazer.wasm, Output is farm-blazer)
-    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./out --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm_blazer.wasm",
-    # Optimize the WASM file
-    "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./out/farm_blazer_bg.wasm ./out/farm_blazer_bg.wasm",
-    # FIX: Create a dummy binary to satisfy Nixpacks' default Rust provider
+    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./out --target web ./target/wasm32-unknown-unknown/release/farm-blazer.wasm",
+    "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./out/farm-blazer_bg.wasm ./out/farm-blazer_bg.wasm",
     "mkdir -p bin",
     "touch bin/farm-blazer",
     "chmod +x bin/farm-blazer"
