@@ -1,6 +1,6 @@
 [phases.setup]
 # We remove caddy from here as we will download a standalone binary
-nixPkgs = ["binaryen", "rustup", "gcc", "pkg-config", "openssl", "fontconfig", "curl"]
+nixPkgs = ["binaryen", "rustup", "gcc", "pkg-config", "openssl", "fontconfig", "curl", "nodejs", "npm"]
 
 [phases.build]
 cmds = [
@@ -26,6 +26,8 @@ cmds = [
     # We copy the *content* of local assets folder into public/assets
     "mkdir -p public/assets",
     "cp -r assets/* public/assets/",
+
+    "npm install -g http-server",
     
     # 7. CRITICAL FIX: Download Caddy and pretend it is our Rust binary.
     # The Rust provider will copy this file to the final image for us.
@@ -35,4 +37,4 @@ cmds = [
 ]
 
 [start]
-cmd = "/app/bin/farm-blazer file-server --root ./public --listen :80"
+cmd = "npx http-server ./public -p 80"
