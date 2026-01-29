@@ -22,7 +22,7 @@ cmds = [
     "cargo build --release --target wasm32-unknown-unknown",
     
     # 5. Generate JS/WASM Bindings (Forcing hyphen name)
-    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./bin/farm-blazer/out --out-name farm-blazer --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm_blazer.wasm",
+    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./bin/farm-blazer/out --out-name farm-blazer --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm-blazer.wasm",
     
     # 6. Optimize WASM
     "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./bin/farm-blazer/out/farm-blazer_bg.wasm ./bin/farm-blazer/out/farm-blazer_bg.wasm",
