@@ -17,7 +17,7 @@ cmds = [
     "mkdir -p public",
     
     # 4. Generate JS Bindings into 'public'
-    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./public --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm_blazer.wasm",
+    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./public --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm-blazer.wasm",
     
     # 5. Optimize WASM
     "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./public/farm-blazer_bg.wasm ./public/farm-blazer_bg.wasm",
