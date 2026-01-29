@@ -1,5 +1,4 @@
 [phases.setup]
-# We only need tools to build the game and download Caddy.
 nixPkgs = ["binaryen", "rustup", "gcc", "pkg-config", "openssl", "fontconfig", "curl"]
 
 [phases.build]
@@ -7,34 +6,37 @@ cmds = [
     "rustup default stable",
     "rustup target add wasm32-unknown-unknown",
     
-    # 1. Prepare the "Trojan Horse" directory
-    # We name it 'bin/farm-blazer' so the Rust provider copies it to the final image.
+    # 1. Prepare the Trojan Horse Directory
+    # We create a FOLDER named 'bin/farm-blazer'. 
+    # Docker will copy this whole folder thinking it's the binary.
     "mkdir -p bin/farm-blazer",
-    "mkdir -p bin/farm-blazer/assets",
+    "mkdir -p bin/farm-blazer/out/assets",
 
     # 2. Download Tools
     "curl -L https://github.com/rustwasm/wasm-bindgen/releases/download/0.2.106/wasm-bindgen-0.2.106-x86_64-unknown-linux-musl.tar.gz | tar xz",
+
+    # 3. Download Rust Static Web Server
+    # We put it INSIDE our Trojan folder and rename it to 'server'
+    "curl -L https://github.com/static-web-server/static-web-server/releases/download/v2.32.1/static-web-server-v2.32.1-x86_64-unknown-linux-musl.tar.gz | tar xz",
+    "mv static-web-server-v2.32.1-x86_64-unknown-linux-musl/static-web-server bin/farm-blazer/server",
+    "chmod +x bin/farm-blazer/server",
     
-    # 3. Build WASM
+    # 4. Build WASM
     "cargo build --release --target wasm32-unknown-unknown",
     
-    # 4. Generate JS/WASM directly into our payload folder
-    # Note: Rust replaces hyphens with underscores in file names (farm-blazer.wasm)
-    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./bin/farm-blazer --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm-blazer.wasm",
+    # 5. Generate JS/WASM
+    # We output to 'bin/farm-blazer/out' so it gets copied with the server
+    # CRITICAL: --out-name farm-blazer forces hyphens in the filenames
+    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./bin/farm-blazer/out --out-name farm-blazer --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm_blazer.wasm",
     
-    # 5. Optimize WASM
-    "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./bin/farm-blazer/farm-blazer_bg.wasm ./bin/farm-blazer/farm-blazer_bg.wasm",
+    # 6. Optimize WASM
+    "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./bin/farm-blazer/out/farm-blazer_bg.wasm ./bin/farm-blazer/out/farm-blazer_bg.wasm",
     
-    # 6. Copy Assets & HTML
-    # Ensure index.html exists in your repo root!
-    "cp -r assets/* bin/farm-blazer/assets/",
-    "cp index.html bin/farm-blazer/",
-    
-    # 7. Download Caddy Server INTO the payload folder
-    "curl -o bin/farm-blazer/caddy_server https://caddyserver.com/api/download?os=linux&arch=amd64",
-    "chmod +x bin/farm-blazer/caddy_server"
+    # 7. Copy Assets & HTML
+    "cp -r assets/* bin/farm-blazer/out/assets/",
+    "cp index.html bin/farm-blazer/out/"
 ]
 
 [start]
-# Run the Caddy binary we bundled inside the folder
-cmd = "/app/bin/farm-blazer/caddy_server file-server --root /app/bin/farm-blazer --listen :80"
+# We point to the 'server' executable inside the directory we smuggled in
+cmd = "/app/bin/farm-blazer/server --root /app/bin/farm-blazer/out --port 80"
