@@ -1,6 +1,6 @@
 [phases.setup]
-# We remove caddy from here as we will download a standalone binary
-nixPkgs = ["binaryen", "rustup", "gcc", "pkg-config", "openssl", "fontconfig", "curl", "nodejs", "npm"]
+# Removed 'npm' (it's part of nodejs) and 'yarn' (unnecessary for npx)
+nixPkgs = ["binaryen", "rustup", "gcc", "pkg-config", "openssl", "fontconfig", "curl", "nodejs"]
 
 [phases.build]
 cmds = [
@@ -26,15 +26,16 @@ cmds = [
     # We copy the *content* of local assets folder into public/assets
     "mkdir -p public/assets",
     "cp -r assets/* public/assets/",
-
-    "npm install -g http-server",
     
-    # 7. CRITICAL FIX: Download Caddy and pretend it is our Rust binary.
-    # The Rust provider will copy this file to the final image for us.
+    # 7. OPTIONAL: Pre-install http-server globally to speed up boot time
+    "npm install -g http-server",
+
+    # 8. DUMMY BINARY TRICK (Required so Nixpacks doesn't fail looking for a rust binary)
     "mkdir -p bin",
-    "curl -o bin/farm-blazer https://caddyserver.com/api/download?os=linux&arch=amd64",
+    "touch bin/farm-blazer",
     "chmod +x bin/farm-blazer"
 ]
 
 [start]
-cmd = "npx http-server ./public -p 80"
+# Use the global http-server we installed in step 7
+cmd = "http-server ./public -p 80"
