@@ -7,6 +7,7 @@ cmds = [
     "rustup target add wasm32-unknown-unknown",
     "curl -L https://github.com/rustwasm/wasm-bindgen/releases/download/0.2.106/wasm-bindgen-0.2.106-x86_64-unknown-linux-musl.tar.gz | tar xz",
     "cargo build --release --target wasm32-unknown-unknown",
+    "ls -la target/wasm32-unknown-unknown/release/",
     "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./out --target web ./target/wasm32-unknown-unknown/release/farm_blazer.wasm",
     "wasm-opt -Oz -o ./out/farm-blazer_bg.wasm ./out/farm_blazer_bg.wasm",
     "mv ./out/farm_blazer.js ./out/farm-blazer.js",
