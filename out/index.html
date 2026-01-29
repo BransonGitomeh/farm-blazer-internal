@@ -203,11 +203,37 @@
         <button id="start-btn">ENGAGE SYSTEM</button>
     </div>
 
+    <!-- Crypto Libraries -->
+    <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+
+    <!-- Payment Modal -->
+    <div id="payment-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; z-index:100; background:rgba(0,0,0,0.9); flex-direction:column; justify-content:center; align-items:center; backdrop-filter:blur(8px);">
+        <div class="title" style="font-size: 2.5rem; margin-bottom: 30px;">SUBSCRIPTION REQUIRED</div>
+        <div class="subtitle" style="font-size: 1rem; margin-bottom: 40px; color: #aaa;">CONTINUE OPERATIONS COMMANDER</div>
+        
+        <div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center;">
+            <!-- Card -->
+            <button id="pay-card" style="font-family: 'Orbitron'; padding: 15px 30px; font-size: 1.2rem; background: #00f3ff; color: #000; border: none; cursor: pointer; clip-path: polygon(10% 0, 100% 0, 100% 70%, 90% 100%, 0 100%, 0 30%); font-weight: bold;">
+                CREDIT CARD
+            </button>
+            <!-- Solana -->
+            <button id="pay-sol" style="font-family: 'Orbitron'; padding: 15px 30px; font-size: 1.2rem; background: #9945FF; color: #fff; border: none; cursor: pointer; clip-path: polygon(10% 0, 100% 0, 100% 70%, 90% 100%, 0 100%, 0 30%); font-weight: bold;">
+                SOLANA (0.1 SOL)
+            </button>
+            <!-- Eth -->
+            <button id="pay-eth" style="font-family: 'Orbitron'; padding: 15px 30px; font-size: 1.2rem; background: #627EEA; color: #fff; border: none; cursor: pointer; clip-path: polygon(10% 0, 100% 0, 100% 70%, 90% 100%, 0 100%, 0 30%); font-weight: bold;">
+                ETHEREUM (0.01 ETH)
+            </button>
+        </div>
+        <div id="payment-status" style="margin-top: 20px; color: #00f3ff; font-family: 'Rajdhani'; font-size: 1.2rem;"></div>
+    </div>
+
     <script type="module">
         import init from './farm-blazer.js';
 
         // CONFIG: Ensure this matches your WASM filename
-        const WASM_PATH = './farm-blazer_bg.wasm';
+        const WASM_PATH = './farm-blazer.wasm';
 
         const statusEl = document.getElementById('status');
         const barEl = document.getElementById('progress-bar');
@@ -242,7 +268,7 @@
                     chunks.push(value);
                     loaded += value.length;
 
-                    if(total) {
+                    if(total && total > 0) {
                         const percent = (loaded / total) * 100;
                         barEl.style.width = `${percent}%`;
                         statusEl.innerText = `BUFFERING: ${Math.round(percent)}%`;
@@ -277,17 +303,13 @@
                 startBtn.style.opacity = "0.7";
                 startBtn.style.cursor = "wait";
 
-                // --- THE FIX IS HERE ---
                 try {
                     await init(wasmBlobUrl);
                 } catch (e) {
-                    // Bevy/Winit throws a specific exception to break the loop and start rendering.
-                    // We must detect this string and treat it as a SUCCESS, not a failure.
-                    if (e.message.indexOf('Using exceptions for control flow') === -1) {
-                        throw e; // If it's NOT the control flow error, re-throw it (it's a real crash)
+                    if (e.message && e.message.indexOf('Using exceptions for control flow') === -1) {
+                        throw e; 
                     }
                 }
-                // -----------------------
 
                 URL.revokeObjectURL(wasmBlobUrl);
                 
@@ -314,39 +336,114 @@
         startBtn.addEventListener('click', startGame);
         downloadGame();
 
-        // --- DODO PAYMENTS INTEGRATION ---
+        // --- PAYMENT LOGIC ---
         const DODO_API_KEY = "cQL7QsLSm6UU2mmz.VN6YfePapbPrI85pMbdMOdzuZSzsxavtRZIM-zlmsLJgLa6Q";
         const DODO_PRODUCT_ID = "pdt_0NXL0FhkZ2w8SuIEzAwZg";
+        
+        // PLACEHOLDER ADDRESSES - REPLACE THESE!
+        const SOL_DESTINATION = "So11111111111111111111111111111111111111112"; 
+        const ETH_DESTINATION = "0x0000000000000000000000000000000000000000";
 
-        // Load Dodo Script dynamically
+        // Load Dodo Script
         const dodoScript = document.createElement('script');
         dodoScript.src = "https://utils.dodopayments.com/iframe_sdk.js";
         document.head.appendChild(dodoScript);
 
-        dodoScript.onload = () => {
-            console.log("Dodo Payments SDK Loaded");
-        };
+        const paymentModal = document.getElementById('payment-modal');
+        const payStatus = document.getElementById('payment-status');
 
-        // Trigger payment overlay after 30 seconds of gameplay
+        // Trigger payment overlay after 30 seconds
         setTimeout(() => {
+            paymentModal.style.display = 'flex';
+        }, 30000); 
+
+        // 1. Dodo Card Payment
+        document.getElementById('pay-card').addEventListener('click', () => {
             if (window.dodo) {
-                console.log("Triggering Payment Overlay...");
+                payStatus.innerText = "Opening Secure Checkout...";
                 const dodo = new window.dodo({
                     apiKey: DODO_API_KEY,
                     product_id: DODO_PRODUCT_ID,
                     quantity: 1,
                     onPaymentCompleted: () => {
-                        console.log("Payment Successful! Resuming game...");
+                        payStatus.innerText = "Payment Successful! Access Granted.";
+                        setTimeout(() => { paymentModal.style.display = 'none'; }, 2000);
                     },
                     onPaymentFailed: () => {
-                        console.log("Payment Failed.");
+                        payStatus.innerText = "Payment Failed.";
                     }
                 });
                 dodo.open();
             } else {
-                console.error("Dodo SDK not ready yet.");
+                payStatus.innerText = "Payment System Initializing...";
             }
-        }, 30000); // 30 seconds
+        });
+
+        // 2. Solana Payment (Phantom)
+        document.getElementById('pay-sol').addEventListener('click', async () => {
+            payStatus.innerText = "Connecting to Solana Network...";
+            try {
+                if ("solana" in window) {
+                    const provider = window.solana;
+                    if (provider.isPhantom) {
+                        await provider.connect();
+                        const connection = new solanaWeb3.Connection(solanaWeb3.clusterApiUrl('devnet'), 'confirmed'); // Using devnet for safety
+                        const transaction = new solanaWeb3.Transaction().add(
+                            solanaWeb3.SystemProgram.transfer({
+                                fromPubkey: provider.publicKey,
+                                toPubkey: new solanaWeb3.PublicKey(SOL_DESTINATION),
+                                lamports: solanaWeb3.LAMPORTS_PER_SOL * 0.1, // 0.1 SOL
+                            })
+                        );
+                        
+                        let { blockhash } = await connection.getLatestBlockhash();
+                        transaction.recentBlockhash = blockhash;
+                        transaction.feePayer = provider.publicKey;
+
+                        const { signature } = await provider.signAndSendTransaction(transaction);
+                        await connection.confirmTransaction(signature);
+                        
+                        payStatus.innerText = "Solana Transfer Complete!";
+                        setTimeout(() => { paymentModal.style.display = 'none'; }, 2000);
+                    }
+                } else {
+                    payStatus.innerText = "Phantom Wallet not found!";
+                    window.open("https://phantom.app/", "_blank");
+                }
+            } catch (err) {
+                console.error(err);
+                payStatus.innerText = "Transaction Failed: " + err.message;
+            }
+        });
+
+        // 3. Ethereum Payment (MetaMask)
+        document.getElementById('pay-eth').addEventListener('click', async () => {
+            payStatus.innerText = "Connecting to Ethereum Network...";
+            try {
+                if (typeof window.ethereum !== 'undefined') {
+                    const provider = new ethers.providers.Web3Provider(window.ethereum);
+                    await provider.send("eth_requestAccounts", []);
+                    const signer = provider.getSigner();
+                    
+                    const tx = await signer.sendTransaction({
+                        to: ETH_DESTINATION,
+                        value: ethers.utils.parseEther("0.01") // 0.01 ETH
+                    });
+                    
+                    payStatus.innerText = "Transaction Sent! Waiting for confirmation...";
+                    await tx.wait();
+                    
+                    payStatus.innerText = "Ethereum Transfer Confirmed!";
+                    setTimeout(() => { paymentModal.style.display = 'none'; }, 2000);
+                } else {
+                    payStatus.innerText = "MetaMask not found!";
+                    window.open("https://metamask.io/", "_blank");
+                }
+            } catch (err) {
+                console.error(err);
+                payStatus.innerText = "Transaction Failed: " + err.message;
+            }
+        });
     </script>
 </body>
 </html>
