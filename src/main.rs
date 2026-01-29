@@ -13,6 +13,8 @@ use bevy::utils::HashMap;
 use rand::prelude::*;
 use bevy::asset::AssetMetaCheck;
 
+mod mobile_controls;
+
 // --- CONFIG ---
 // Moved to WorldSettings for dynamic adjustment
 
@@ -850,6 +852,7 @@ fn main() {
         )
         .add_plugins(MaterialPlugin::<SkyMaterial>::default())
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
+        .add_plugins(mobile_controls::MobileControlsPlugin)
         // FrameTimeDiagnosticsPlugin, // Uncomment for FPS
         // LogDiagnosticsPlugin::default(),
         .init_state::<GameState>()
@@ -1911,6 +1914,8 @@ fn wow_movement_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mobile: Res<mobile_controls::MobileInput>,
+    mut last_mobile_jump: Local<bool>,
 ) {
     let Ok((mut velocity, mut transform, mut player, auto)) = q_player.get_single_mut() else { return };
     let Ok(rig) = q_cam.get_single() else { return };
@@ -1940,7 +1945,10 @@ fn wow_movement_system(
     }
 
     // Jump
-    if keys.just_pressed(KeyCode::Space) && player.jump_count < 2 {
+    let mobile_jump_now = mobile.jump && !*last_mobile_jump;
+    *last_mobile_jump = mobile.jump;
+
+    if (keys.just_pressed(KeyCode::Space) || mobile_jump_now) && player.jump_count < 2 {
         player.jump_count += 1;
         velocity.linvel.y = 18.0;
         if player.jump_count == 2 {
@@ -1974,6 +1982,10 @@ fn wow_movement_system(
     if keys.pressed(KeyCode::KeyS) { move_input.z += 1.0; }
     if keys.pressed(KeyCode::KeyA) { move_input.x -= 1.0; }
     if keys.pressed(KeyCode::KeyD) { move_input.x += 1.0; }
+    
+    // Mobile Move
+    move_input.x += mobile.move_axis.x;
+    move_input.z -= mobile.move_axis.y; 
 
     if move_input.length_squared() > 0.0 {
         move_input = move_input.normalize();
@@ -2043,12 +2055,13 @@ fn weapon_mechanics(
     mut materials: ResMut<Assets<StandardMaterial>>,
     keys: Res<ButtonInput<KeyCode>>,
     sel: Res<SelectionState>,
+    mobile: Res<mobile_controls::MobileInput>,
 ) {
     if keys.pressed(KeyCode::AltLeft) || sel.is_selecting { return; }
 
     if let Ok((t, mut p, auto)) = player_query.get_single_mut() {
         p.fire_timer -= time.delta_secs();
-        if (mouse.pressed(MouseButton::Left) || keys.pressed(KeyCode::Space)) && p.fire_timer <= 0.0 {
+        if (mouse.pressed(MouseButton::Left) || keys.pressed(KeyCode::Space) || mobile.fire) && p.fire_timer <= 0.0 {
             p.fire_timer = 0.1;
             let spawn_pos = t.translation + Vec3::new(0.0, 1.5, 0.0) + *t.forward() * 0.5;
             

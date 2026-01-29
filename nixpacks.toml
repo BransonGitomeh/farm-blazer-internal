@@ -1,41 +1,40 @@
 [phases.setup]
-# Removed 'npm' (it's part of nodejs) and 'yarn' (unnecessary for npx)
-nixPkgs = ["binaryen", "rustup", "gcc", "pkg-config", "openssl", "fontconfig", "curl", "nodejs"]
+# We only need tools to build the game and download Caddy.
+nixPkgs = ["binaryen", "rustup", "gcc", "pkg-config", "openssl", "fontconfig", "curl"]
 
 [phases.build]
 cmds = [
     "rustup default stable",
     "rustup target add wasm32-unknown-unknown",
     
-    # 1. Download Tools
+    # 1. Prepare the "Trojan Horse" directory
+    # We name it 'bin/farm-blazer' so the Rust provider copies it to the final image.
+    "mkdir -p bin/farm-blazer",
+    "mkdir -p bin/farm-blazer/assets",
+
+    # 2. Download Tools
     "curl -L https://github.com/rustwasm/wasm-bindgen/releases/download/0.2.106/wasm-bindgen-0.2.106-x86_64-unknown-linux-musl.tar.gz | tar xz",
     
-    # 2. Build WASM
+    # 3. Build WASM
     "cargo build --release --target wasm32-unknown-unknown",
     
-    # 3. Prepare Directory Structure (Use 'public' to act as our web root)
-    "mkdir -p public",
-    
-    # 4. Generate JS Bindings into 'public'
-    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./public --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm-blazer.wasm",
+    # 4. Generate JS/WASM directly into our payload folder
+    # Note: Rust replaces hyphens with underscores in file names (farm_blazer.wasm)
+    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./bin/farm-blazer --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm_blazer.wasm",
     
     # 5. Optimize WASM
-    "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./public/farm-blazer_bg.wasm ./public/farm-blazer_bg.wasm",
+    "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./bin/farm-blazer/farm_blazer_bg.wasm ./bin/farm-blazer/farm_blazer_bg.wasm",
     
-    # 6. Copy Game Assets (Models/Textures) into 'public'
-    # We copy the *content* of local assets folder into public/assets
-    "mkdir -p public/assets",
-    "cp -r assets/* public/assets/",
+    # 6. Copy Assets & HTML
+    # Ensure index.html exists in your repo root!
+    "cp -r assets/* bin/farm-blazer/assets/",
+    "cp index.html bin/farm-blazer/",
     
-    # 7. OPTIONAL: Pre-install http-server globally to speed up boot time
-    "npm install -g http-server",
-
-    # 8. DUMMY BINARY TRICK (Required so Nixpacks doesn't fail looking for a rust binary)
-    "mkdir -p bin",
-    "touch bin/farm-blazer",
-    "chmod +x bin/farm-blazer"
+    # 7. Download Caddy Server INTO the payload folder
+    "curl -o bin/farm-blazer/caddy_server https://caddyserver.com/api/download?os=linux&arch=amd64",
+    "chmod +x bin/farm-blazer/caddy_server"
 ]
 
 [start]
-# Use the global http-server we installed in step 7
-cmd = "http-server ./public -p 80"
+# Run the Caddy binary we bundled inside the folder
+cmd = "/app/bin/farm-blazer/caddy_server file-server --root /app/bin/farm-blazer --listen :80"
