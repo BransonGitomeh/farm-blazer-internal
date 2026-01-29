@@ -313,6 +313,40 @@
 
         startBtn.addEventListener('click', startGame);
         downloadGame();
+
+        // --- DODO PAYMENTS INTEGRATION ---
+        const DODO_API_KEY = "cQL7QsLSm6UU2mmz.VN6YfePapbPrI85pMbdMOdzuZSzsxavtRZIM-zlmsLJgLa6Q";
+        const DODO_PRODUCT_ID = "pdt_0NXL0FhkZ2w8SuIEzAwZg";
+
+        // Load Dodo Script dynamically
+        const dodoScript = document.createElement('script');
+        dodoScript.src = "https://utils.dodopayments.com/iframe_sdk.js";
+        document.head.appendChild(dodoScript);
+
+        dodoScript.onload = () => {
+            console.log("Dodo Payments SDK Loaded");
+        };
+
+        // Trigger payment overlay after 30 seconds of gameplay
+        setTimeout(() => {
+            if (window.dodo) {
+                console.log("Triggering Payment Overlay...");
+                const dodo = new window.dodo({
+                    apiKey: DODO_API_KEY,
+                    product_id: DODO_PRODUCT_ID,
+                    quantity: 1,
+                    onPaymentCompleted: () => {
+                        console.log("Payment Successful! Resuming game...");
+                    },
+                    onPaymentFailed: () => {
+                        console.log("Payment Failed.");
+                    }
+                });
+                dodo.open();
+            } else {
+                console.error("Dodo SDK not ready yet.");
+            }
+        }, 30000); // 30 seconds
     </script>
 </body>
 </html>
