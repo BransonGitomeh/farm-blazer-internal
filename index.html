@@ -3,447 +3,306 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Swarm Defense: Logistics Commander</title>
-    <!-- Import Sci-Fi Font -->
+    <title>Swarm Defense | Command Terminal</title>
+    
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
     
     <style>
-        /* --- CORE LAYOUT --- */
+        :root {
+            --neon: #00f3ff;
+            --neon-dim: rgba(0, 243, 255, 0.3);
+            --danger: #ff3333;
+            --success: #64ffda;
+            --bg: #03080a;
+            --panel: rgba(0, 20, 30, 0.85);
+        }
+
+        /* --- CORE --- */
         html, body {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            background-color: #050505;
-            font-family: 'Rajdhani', sans-serif;
-            color: white;
-            user-select: none;
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background-color: var(--bg);
+            font-family: 'Rajdhani', sans-serif; color: white; user-select: none;
         }
 
-        /* --- BACKGROUND FX --- */
+        /* --- TACTICAL VISUALS --- */
         .bg-grid {
-            position: absolute;
-            width: 200%;
-            height: 200%;
-            top: -50%;
-            left: -50%;
+            position: absolute; width: 200%; height: 200%; top: -50%; left: -50%;
             background-image: 
-                linear-gradient(rgba(0, 255, 242, 0.03) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0, 255, 242, 0.03) 1px, transparent 1px);
-            background-size: 40px 40px;
-            transform: perspective(500px) rotateX(60deg);
-            animation: grid-move 20s linear infinite;
-            z-index: 0;
-            pointer-events: none;
+                linear-gradient(var(--neon-dim) 1px, transparent 1px),
+                linear-gradient(90deg, var(--neon-dim) 1px, transparent 1px);
+            background-size: 50px 50px;
+            transform: perspective(1000px) rotateX(60deg);
+            animation: grid-move 30s linear infinite;
+            z-index: 0; opacity: 0.2;
         }
-
         @keyframes grid-move {
-            0% { transform: perspective(500px) rotateX(60deg) translateY(0); }
-            100% { transform: perspective(500px) rotateX(60deg) translateY(40px); }
+            0% { transform: perspective(1000px) rotateX(60deg) translateY(0); }
+            100% { transform: perspective(1000px) rotateX(60deg) translateY(50px); }
         }
 
         .scanlines {
-            position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.2));
-            background-size: 100% 4px;
-            pointer-events: none;
-            z-index: 20;
-            opacity: 0.6;
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(to bottom, transparent 50%, rgba(0,0,0,0.3) 50%);
+            background-size: 100% 4px; z-index: 1000; pointer-events: none; opacity: 0.4;
         }
 
-        /* --- GAME CANVAS --- */
         canvas {
-            display: block;
-            width: 100% !important;
-            height: 100% !important;
-            touch-action: none;
-            position: absolute;
-            top: 0; left: 0;
-            z-index: 1;
-            opacity: 0;
-            transition: opacity 1.5s ease-in-out;
+            display: block; width: 100% !important; height: 100% !important;
+            position: absolute; top: 0; left: 0; z-index: 1; opacity: 0;
+            transition: opacity 2s ease-in;
         }
 
-        /* --- UI CONTAINER --- */
+        /* --- LOADING SCREEN --- */
         #loader {
-            position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
-            z-index: 10;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            background: radial-gradient(circle at center, rgba(10, 20, 40, 0.9) 0%, #000000 100%);
-            transition: opacity 0.5s ease-out;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 100; display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            background: radial-gradient(circle at center, #0a1428 0%, #000 100%);
+            transition: opacity 1s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .glitch-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: clamp(2.5rem, 8vw, 4.5rem);
+            font-weight: 900; letter-spacing: 12px;
+            text-shadow: 0.05em 0 0 rgba(255,0,0,.75), -0.05em -0.025em 0 rgba(0,255,0,.75), 0.025em 0.05em 0 rgba(0,0,255,.75);
+            animation: glitch 1s infinite;
+        }
+
+        @keyframes glitch {
+            0% { text-shadow: 0.05em 0 0 rgba(255,0,0,.75), -0.05em -0.025em 0 rgba(0,255,0,.75), -0.025em 0.05em 0 rgba(0,0,255,.75); }
+            14% { text-shadow: 0.05em 0 0 rgba(255,0,0,.75), -0.05em -0.025em 0 rgba(0,255,0,.75), -0.025em 0.05em 0 rgba(0,0,255,.75); }
+            15% { text-shadow: -0.05em -0.025em 0 rgba(255,0,0,.75), 0.025em 0.025em 0 rgba(0,255,0,.75), -0.05em -0.05em 0 rgba(0,0,255,.75); }
+            49% { text-shadow: -0.05em -0.025em 0 rgba(255,0,0,.75), 0.025em 0.025em 0 rgba(0,255,0,.75), -0.05em -0.05em 0 rgba(0,0,255,.75); }
+            50% { text-shadow: 0.025em 0.05em 0 rgba(255,0,0,.75), 0.05em 0 0 rgba(0,255,0,.75), 0 -0.05em 0 rgba(0,0,255,.75); }
+            99% { text-shadow: 0.025em 0.05em 0 rgba(255,0,0,.75), 0.05em 0 0 rgba(0,255,0,.75), 0 -0.05em 0 rgba(0,0,255,.75); }
+            100% { text-shadow: -0.025em 0 0 rgba(255,0,0,.75), -0.025em -0.025em 0 rgba(0,255,0,.75), -0.025em -0.05em 0 rgba(0,0,255,.75); }
+        }
+
+        .loading-container { width: 400px; max-width: 85vw; margin-top: 50px; }
+        .progress-frame { border: 1px solid var(--neon); padding: 4px; background: rgba(0, 243, 255, 0.05); }
+        .progress-bar { height: 10px; width: 0%; background: var(--neon); box-shadow: 0 0 15px var(--neon); transition: width 0.2s ease-out; }
+        
+        .status-text {
+            font-family: 'Share Tech Mono', monospace; font-size: 0.8rem;
+            margin-top: 10px; color: var(--neon); text-transform: uppercase;
+            display: flex; justify-content: space-between;
+        }
+
+        /* --- BUTTONS --- */
+        .cmd-btn {
+            display: none; margin-top: 40px; padding: 15px 50px;
+            font-family: 'Orbitron', sans-serif; font-weight: 700;
+            background: transparent; color: var(--neon); border: 2px solid var(--neon);
+            cursor: pointer; transition: 0.3s;
+            clip-path: polygon(10% 0, 100% 0, 100% 70%, 90% 100%, 0 100%, 0 30%);
+        }
+        .cmd-btn:hover { background: var(--neon); color: black; box-shadow: 0 0 30px var(--neon); }
+
+        /* --- TRIAL HUD --- */
+        #hud-timer {
+            position: fixed; top: 20px; right: 20px; z-index: 500;
+            font-family: 'Share Tech Mono', monospace;
+            background: rgba(0,0,0,0.7); padding: 10px 20px;
+            border-left: 4px solid var(--neon); display: none;
             backdrop-filter: blur(5px);
         }
 
-        /* --- TYPOGRAPHY --- */
-        .title {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 4rem;
-            font-weight: 900;
-            letter-spacing: 6px;
-            margin-bottom: 5px;
-            text-transform: uppercase;
-            color: #fff;
-            text-shadow: 0 0 20px rgba(0, 243, 255, 0.6);
-            position: relative;
+        /* --- PAYMENT MODAL --- */
+        #payment-modal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 2000; background: rgba(1, 8, 10, 0.98);
+            flex-direction: column; justify-content: center; align-items: center;
+            backdrop-filter: blur(15px);
         }
 
-        .subtitle {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 1.2rem;
-            color: #00f3ff;
-            margin-bottom: 60px;
-            letter-spacing: 8px;
-            text-transform: uppercase;
-            border-bottom: 1px solid rgba(0, 243, 255, 0.3);
-            padding-bottom: 10px;
+        .pay-card {
+            background: var(--panel); border: 1px solid var(--neon);
+            padding: 40px; width: 500px; max-width: 90vw;
+            text-align: center; clip-path: polygon(0 0, 95% 0, 100% 5%, 100% 100%, 5% 100%, 0 95%);
         }
 
-        /* --- LOADING BAR --- */
-        .loading-wrapper {
-            width: 400px;
-            position: relative;
+        .pay-option {
+            width: 100%; margin: 12px 0; padding: 18px;
+            border: 1px solid rgba(0, 243, 255, 0.2);
+            background: rgba(255,255,255,0.03); color: white;
+            font-family: 'Orbitron'; cursor: pointer; transition: 0.2s;
+            display: flex; justify-content: space-between; align-items: center;
         }
+        .pay-option:hover { border-color: var(--neon); background: rgba(0, 243, 255, 0.15); box-shadow: 0 0 20px rgba(0,243,255,0.2); }
+        .pay-option.sol { border-color: #9945FF; }
+        .pay-option.eth { border-color: #627EEA; }
 
-        .progress-border {
-            width: 100%;
-            height: 14px;
-            border: 2px solid #333;
-            padding: 3px;
-            border-radius: 2px;
-            background: rgba(0,0,0,0.5);
-            box-shadow: 0 0 15px rgba(0, 243, 255, 0.1);
-        }
-
-        .progress-bar {
-            width: 0%;
-            height: 100%;
-            background: repeating-linear-gradient(
-                45deg,
-                #00c6ff,
-                #00c6ff 10px,
-                #0072ff 10px,
-                #0072ff 20px
-            );
-            box-shadow: 0 0 15px #0072ff;
-            transition: width 0.1s linear;
-        }
-
-        #status {
-            margin-top: 15px;
-            font-size: 1rem;
-            color: #00f3ff;
-            font-family: 'Rajdhani', monospace;
-            text-align: right;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            height: 20px;
-        }
-
-        /* --- START BUTTON --- */
-        #start-btn {
-            display: none; /* Hidden until loaded */
-            font-family: 'Orbitron', sans-serif;
-            padding: 20px 60px;
-            font-size: 1.5rem;
-            font-weight: bold;
-            color: #00f3ff;
-            background: rgba(0, 243, 255, 0.1);
-            border: 2px solid #00f3ff;
-            cursor: pointer;
-            text-transform: uppercase;
-            letter-spacing: 4px;
-            box-shadow: 0 0 20px rgba(0, 243, 255, 0.2);
-            transition: all 0.2s ease;
-            clip-path: polygon(10% 0, 100% 0, 100% 70%, 90% 100%, 0 100%, 0 30%);
-        }
-
-        #start-btn:hover {
-            background: #00f3ff;
-            color: #000;
-            box-shadow: 0 0 40px rgba(0, 243, 255, 0.8);
-            transform: translateY(-2px);
-        }
-
-        #start-btn:active {
-            transform: translateY(1px);
-        }
-
-        /* --- ERROR STATE --- */
-        .error { color: #ff3333 !important; text-shadow: 0 0 10px #ff0000; }
+        #pay-status { margin-top: 20px; color: var(--neon); font-family: 'Share Tech Mono'; }
     </style>
 </head>
 <body>
 
-    <!-- Visual FX -->
     <div class="bg-grid"></div>
     <div class="scanlines"></div>
 
-    <!-- Loading UI -->
-    <div id="loader">
-        <div class="title">SWARM DEFENSE</div>
-        <div class="subtitle">Logistics Commander</div>
-        
-        <!-- Phase 1: Downloader -->
-        <div id="loading-ui" class="loading-wrapper">
-            <div class="progress-border">
-                <div id="progress-bar" class="progress-bar"></div>
-            </div>
-            <div id="status">ESTABLISHING UPLINK...</div>
-        </div>
-
-        <!-- Phase 2: Start Button -->
-        <button id="start-btn">ENGAGE SYSTEM</button>
+    <div id="hud-timer">
+        LINK_STABILITY: <span id="timer-val" style="color: var(--success);">30.00</span>s
     </div>
 
-    <!-- Crypto Libraries -->
+    <!-- LOADER -->
+    <div id="loader">
+        <div class="glitch-title">SWARM DEFENSE</div>
+        <div style="color: var(--neon); letter-spacing: 5px; font-weight: 600; margin-top: 5px;">COMMAND TERMINAL v2.0</div>
+
+        <div id="load-wrapper" class="loading-container">
+            <div class="progress-frame">
+                <div id="bar" class="progress-bar"></div>
+            </div>
+            <div class="status-text">
+                <span id="status">Establishing Neural Uplink...</span>
+                <span id="percent">0%</span>
+            </div>
+        </div>
+
+        <button id="start-btn" class="cmd-btn">ENGAGE SYSTEM</button>
+    </div>
+
+    <!-- PAYWALL -->
+    <div id="payment-modal">
+        <div class="pay-card">
+            <h1 class="glitch-title" style="font-size: 2rem; color: var(--danger);">LINK DISCONNECTED</h1>
+            <p style="color: #888; letter-spacing: 1px; margin-bottom: 30px;">Maintain High Command connection to continue operations.</p>
+            
+            <button id="pay-card-btn" class="pay-option">
+                <span>CREDIT CARD / STRIPE</span>
+                <small>$9.99</small>
+            </button>
+            <button id="pay-sol-btn" class="pay-option sol">
+                <span>SOLANA</span>
+                <small>0.1 SOL</small>
+            </button>
+            <button id="pay-eth-btn" class="pay-option eth">
+                <span>ETHEREUM</span>
+                <small>0.01 ETH</small>
+            </button>
+
+            <div id="pay-status"></div>
+        </div>
+    </div>
+
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
 
-    <!-- Payment Modal -->
-    <div id="payment-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; z-index:100; background:rgba(0,0,0,0.9); flex-direction:column; justify-content:center; align-items:center; backdrop-filter:blur(8px);">
-        <div class="title" style="font-size: 2.5rem; margin-bottom: 30px;">SUBSCRIPTION REQUIRED</div>
-        <div class="subtitle" style="font-size: 1rem; margin-bottom: 40px; color: #aaa;">CONTINUE OPERATIONS COMMANDER</div>
-        
-        <div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center;">
-            <!-- Card -->
-            <button id="pay-card" style="font-family: 'Orbitron'; padding: 15px 30px; font-size: 1.2rem; background: #00f3ff; color: #000; border: none; cursor: pointer; clip-path: polygon(10% 0, 100% 0, 100% 70%, 90% 100%, 0 100%, 0 30%); font-weight: bold;">
-                CREDIT CARD
-            </button>
-            <!-- Solana -->
-            <button id="pay-sol" style="font-family: 'Orbitron'; padding: 15px 30px; font-size: 1.2rem; background: #9945FF; color: #fff; border: none; cursor: pointer; clip-path: polygon(10% 0, 100% 0, 100% 70%, 90% 100%, 0 100%, 0 30%); font-weight: bold;">
-                SOLANA (0.1 SOL)
-            </button>
-            <!-- Eth -->
-            <button id="pay-eth" style="font-family: 'Orbitron'; padding: 15px 30px; font-size: 1.2rem; background: #627EEA; color: #fff; border: none; cursor: pointer; clip-path: polygon(10% 0, 100% 0, 100% 70%, 90% 100%, 0 100%, 0 30%); font-weight: bold;">
-                ETHEREUM (0.01 ETH)
-            </button>
-        </div>
-        <div id="payment-status" style="margin-top: 20px; color: #00f3ff; font-family: 'Rajdhani'; font-size: 1.2rem;"></div>
-    </div>
-
     <script type="module">
         import init from './farm-blazer.js';
-
-        // CONFIG: Ensure this matches your WASM filename
         const WASM_PATH = './farm-blazer.wasm';
 
-        const statusEl = document.getElementById('status');
-        const barEl = document.getElementById('progress-bar');
-        const loaderEl = document.getElementById('loader');
-        const loadUiEl = document.getElementById('loading-ui');
+        const bar = document.getElementById('bar');
+        const percentTxt = document.getElementById('percent');
+        const statusTxt = document.getElementById('status');
         const startBtn = document.getElementById('start-btn');
-        
+        const loader = document.getElementById('loader');
+        const hud = document.getElementById('hud-timer');
+        const payModal = document.getElementById('payment-modal');
+
         let wasmBlobUrl = null;
 
-        // --- STEP 1: DOWNLOAD ASSETS ---
-        async function downloadGame() {
+        async function download() {
             try {
                 const response = await fetch(WASM_PATH);
-                
-                if (!response.ok) {
-                    throw new Error(`Signal Lost: ${response.status} ${response.statusText}`);
-                }
+                if (!response.ok) throw new Error("Connection Lost");
 
-                const contentLength = response.headers.get('Content-Length');
-                const total = parseInt(contentLength, 10);
+                const total = parseInt(response.headers.get('Content-Length'), 10);
                 let loaded = 0;
-
                 const reader = response.body.getReader();
                 const chunks = [];
-
-                statusEl.innerText = "DOWNLOADING CORE ASSETS...";
 
                 while(true) {
                     const {done, value} = await reader.read();
                     if (done) break;
-                    
                     chunks.push(value);
                     loaded += value.length;
-
-                    if(total && total > 0) {
-                        const percent = (loaded / total) * 100;
-                        barEl.style.width = `${percent}%`;
-                        statusEl.innerText = `BUFFERING: ${Math.round(percent)}%`;
-                    } else {
-                         statusEl.innerText = `DOWNLOADING: ${(loaded/1024/1024).toFixed(2)} MB`;
+                    
+                    if (total) {
+                        const p = Math.round((loaded / total) * 100);
+                        bar.style.width = p + '%';
+                        percentTxt.innerText = p + '%';
+                        statusTxt.innerText = `Buffering Data Vectors...`;
                     }
                 }
 
-                const blob = new Blob(chunks, { type: 'application/wasm' });
-                wasmBlobUrl = URL.createObjectURL(blob);
+                wasmBlobUrl = URL.createObjectURL(new Blob(chunks, { type: 'application/wasm' }));
+                statusTxt.innerText = "System Ready";
+                document.getElementById('load-wrapper').style.opacity = '0.3';
+                startBtn.style.display = 'block';
 
-                statusEl.innerText = "SYSTEM READY";
-                barEl.style.width = '100%';
-                
-                setTimeout(() => {
-                    loadUiEl.style.display = 'none';
-                    startBtn.style.display = 'block';
-                }, 400);
-                
-            } catch (err) {
-                console.error(err);
-                statusEl.classList.add('error');
-                statusEl.innerText = "CONNECTION FAILED. CHECK CONSOLE.";
-                barEl.style.backgroundColor = "red";
+            } catch (e) {
+                statusTxt.innerText = "CRITICAL FAILURE: Uplink Interrupted";
+                statusTxt.style.color = "red";
             }
         }
 
-        // --- STEP 2: INITIALIZE GAME ---
-        async function startGame() {
-            try {
-                startBtn.innerText = "INITIALIZING...";
-                startBtn.style.opacity = "0.7";
-                startBtn.style.cursor = "wait";
+        async function boot() {
+            startBtn.innerText = "INITIALIZING...";
+            startBtn.disabled = true;
 
+            try {
+                // Bevy Init
                 try {
                     await init(wasmBlobUrl);
                 } catch (e) {
-                    if (e.message && e.message.indexOf('Using exceptions for control flow') === -1) {
-                        throw e; 
-                    }
+                    if (!e.message || e.message.indexOf('exceptions for control flow') === -1) throw e;
                 }
 
                 URL.revokeObjectURL(wasmBlobUrl);
-                
-                loaderEl.style.opacity = '0';
+                loader.style.opacity = '0';
                 
                 setTimeout(() => {
-                    loaderEl.remove();
+                    loader.remove();
+                    hud.style.display = 'block';
+                    startTrial();
                     const canvas = document.querySelector('canvas');
-                    if(canvas) {
-                        canvas.style.opacity = '1';
-                        canvas.focus();
-                    }
-                }, 500);
+                    if(canvas) { canvas.style.opacity = '1'; canvas.focus(); }
+                }, 1000);
 
-            } catch (err) {
-                console.error("Boot Failure:", err);
-                startBtn.classList.add('error');
-                startBtn.innerText = "BOOT FAILURE";
-                startBtn.style.borderColor = "red";
-                startBtn.style.color = "red";
+            } catch (e) {
+                console.error(e);
+                startBtn.innerText = "BOOT ERROR";
             }
         }
 
-        startBtn.addEventListener('click', startGame);
-        downloadGame();
+        function startTrial() {
+            let timeLeft = 30.0;
+            const timerVal = document.getElementById('timer-val');
+            
+            const interval = setInterval(() => {
+                timeLeft -= 0.01;
+                timerVal.innerText = timeLeft.toFixed(2);
+                
+                if (timeLeft <= 10) timerVal.style.color = "var(--danger)";
 
-        // --- PAYMENT LOGIC ---
-        const DODO_API_KEY = "cQL7QsLSm6UU2mmz.VN6YfePapbPrI85pMbdMOdzuZSzsxavtRZIM-zlmsLJgLa6Q";
-        const DODO_PRODUCT_ID = "pdt_0NXL0FhkZ2w8SuIEzAwZg";
-        
-        // PLACEHOLDER ADDRESSES - REPLACE THESE!
-        const SOL_DESTINATION = "So11111111111111111111111111111111111111112"; 
-        const ETH_DESTINATION = "0x0000000000000000000000000000000000000000";
-
-        // Load Dodo Script
-        const dodoScript = document.createElement('script');
-        dodoScript.src = "https://utils.dodopayments.com/iframe_sdk.js";
-        document.head.appendChild(dodoScript);
-
-        const paymentModal = document.getElementById('payment-modal');
-        const payStatus = document.getElementById('payment-status');
-
-        // Trigger payment overlay after 30 seconds
-        setTimeout(() => {
-            paymentModal.style.display = 'flex';
-        }, 30000); 
-
-        // 1. Dodo Card Payment
-        document.getElementById('pay-card').addEventListener('click', () => {
-            if (window.dodo) {
-                payStatus.innerText = "Opening Secure Checkout...";
-                const dodo = new window.dodo({
-                    apiKey: DODO_API_KEY,
-                    product_id: DODO_PRODUCT_ID,
-                    quantity: 1,
-                    onPaymentCompleted: () => {
-                        payStatus.innerText = "Payment Successful! Access Granted.";
-                        setTimeout(() => { paymentModal.style.display = 'none'; }, 2000);
-                    },
-                    onPaymentFailed: () => {
-                        payStatus.innerText = "Payment Failed.";
-                    }
-                });
-                dodo.open();
-            } else {
-                payStatus.innerText = "Payment System Initializing...";
-            }
-        });
-
-        // 2. Solana Payment (Phantom)
-        document.getElementById('pay-sol').addEventListener('click', async () => {
-            payStatus.innerText = "Connecting to Solana Network...";
-            try {
-                if ("solana" in window) {
-                    const provider = window.solana;
-                    if (provider.isPhantom) {
-                        await provider.connect();
-                        const connection = new solanaWeb3.Connection(solanaWeb3.clusterApiUrl('devnet'), 'confirmed'); // Using devnet for safety
-                        const transaction = new solanaWeb3.Transaction().add(
-                            solanaWeb3.SystemProgram.transfer({
-                                fromPubkey: provider.publicKey,
-                                toPubkey: new solanaWeb3.PublicKey(SOL_DESTINATION),
-                                lamports: solanaWeb3.LAMPORTS_PER_SOL * 0.1, // 0.1 SOL
-                            })
-                        );
-                        
-                        let { blockhash } = await connection.getLatestBlockhash();
-                        transaction.recentBlockhash = blockhash;
-                        transaction.feePayer = provider.publicKey;
-
-                        const { signature } = await provider.signAndSendTransaction(transaction);
-                        await connection.confirmTransaction(signature);
-                        
-                        payStatus.innerText = "Solana Transfer Complete!";
-                        setTimeout(() => { paymentModal.style.display = 'none'; }, 2000);
-                    }
-                } else {
-                    payStatus.innerText = "Phantom Wallet not found!";
-                    window.open("https://phantom.app/", "_blank");
+                if (timeLeft <= 0) {
+                    clearInterval(interval);
+                    timerVal.innerText = "0.00";
+                    payModal.style.display = 'flex';
                 }
-            } catch (err) {
-                console.error(err);
-                payStatus.innerText = "Transaction Failed: " + err.message;
-            }
-        });
+            }, 10);
+        }
 
-        // 3. Ethereum Payment (MetaMask)
-        document.getElementById('pay-eth').addEventListener('click', async () => {
-            payStatus.innerText = "Connecting to Ethereum Network...";
-            try {
-                if (typeof window.ethereum !== 'undefined') {
-                    const provider = new ethers.providers.Web3Provider(window.ethereum);
-                    await provider.send("eth_requestAccounts", []);
-                    const signer = provider.getSigner();
-                    
-                    const tx = await signer.sendTransaction({
-                        to: ETH_DESTINATION,
-                        value: ethers.utils.parseEther("0.01") // 0.01 ETH
-                    });
-                    
-                    payStatus.innerText = "Transaction Sent! Waiting for confirmation...";
-                    await tx.wait();
-                    
-                    payStatus.innerText = "Ethereum Transfer Confirmed!";
-                    setTimeout(() => { paymentModal.style.display = 'none'; }, 2000);
-                } else {
-                    payStatus.innerText = "MetaMask not found!";
-                    window.open("https://metamask.io/", "_blank");
-                }
-            } catch (err) {
-                console.error(err);
-                payStatus.innerText = "Transaction Failed: " + err.message;
-            }
-        });
+        // --- PAYMENT MOCK LOGIC ---
+        const payStatus = document.getElementById('pay-status');
+
+        document.getElementById('pay-card-btn').onclick = () => {
+            payStatus.innerText = "Connecting to Secure Gateway...";
+            // Add your Dodo/Stripe logic here
+        };
+
+        document.getElementById('pay-sol-btn').onclick = async () => {
+            if (!window.solana) return window.open("https://phantom.app/", "_blank");
+            payStatus.innerText = "Awaiting Wallet Approval...";
+            // Add Solana transfer logic here
+        };
+
+        startBtn.onclick = boot;
+        download();
     </script>
 </body>
 </html>
