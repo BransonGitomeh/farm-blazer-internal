@@ -9,7 +9,6 @@ cmds = [
     "cargo build --release --target wasm32-unknown-unknown",
     "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./out --target web ./target/wasm32-unknown-unknown/release/farm-blazer.wasm",
     "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./out/farm-blazer_bg.wasm ./out/farm-blazer_bg.wasm",
-    "mv ./out/farm-blazer.js ./out/farm-blazer.js",
     "rm ./out/farm-blazer_bg.wasm"
 ]
 
