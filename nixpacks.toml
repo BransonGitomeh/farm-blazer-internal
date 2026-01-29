@@ -1,42 +1,45 @@
 [phases.setup]
-nixPkgs = ["binaryen", "rustup", "gcc", "pkg-config", "openssl", "fontconfig", "curl"]
+# Added 'brotli' for high-ratio compression
+nixPkgs = ["binaryen", "rustup", "gcc", "pkg-config", "openssl", "fontconfig", "curl", "brotli"]
 
 [phases.build]
 cmds = [
     "rustup default stable",
     "rustup target add wasm32-unknown-unknown",
     
-    # 1. Prepare the Trojan Horse Directory
-    # We create a FOLDER named 'bin/farm-blazer'. 
-    # Docker will copy this whole folder thinking it's the binary.
-    "mkdir -p bin/farm-blazer",
+    # 1. Prepare Directory Structure
     "mkdir -p bin/farm-blazer/out/assets",
 
     # 2. Download Tools
     "curl -L https://github.com/rustwasm/wasm-bindgen/releases/download/0.2.106/wasm-bindgen-0.2.106-x86_64-unknown-linux-musl.tar.gz | tar xz",
-
-    # 3. Download Rust Static Web Server
-    # We put it INSIDE our Trojan folder and rename it to 'server'
     "curl -L https://github.com/static-web-server/static-web-server/releases/download/v2.32.1/static-web-server-v2.32.1-x86_64-unknown-linux-musl.tar.gz | tar xz",
+    
+    # 3. Setup Server
     "mv static-web-server-v2.32.1-x86_64-unknown-linux-musl/static-web-server bin/farm-blazer/server",
     "chmod +x bin/farm-blazer/server",
     
     # 4. Build WASM
     "cargo build --release --target wasm32-unknown-unknown",
     
-    # 5. Generate JS/WASM
-    # We output to 'bin/farm-blazer/out' so it gets copied with the server
-    # CRITICAL: --out-name farm-blazer forces hyphens in the filenames
+    # 5. Generate JS/WASM Bindings
     "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./bin/farm-blazer/out --out-name farm-blazer --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm-blazer.wasm",
     
-    # 6. Optimize WASM
+    # 6. Optimize WASM Binary (Step 1: Structural Optimization)
     "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./bin/farm-blazer/out/farm-blazer_bg.wasm ./bin/farm-blazer/out/farm-blazer_bg.wasm",
     
     # 7. Copy Assets & HTML
     "cp -r assets/* bin/farm-blazer/out/assets/",
-    "cp index.html bin/farm-blazer/out/"
+    "cp index.html bin/farm-blazer/out/",
+
+    # 8. PRODUCTION COMPRESSION (Step 2: Pre-compression)
+    # We find all static files and create .br (Brotli) versions side-by-side.
+    # The server will automatically serve these smaller files to browsers that support them.
+    "find bin/farm-blazer/out -type f \\( -name '*.wasm' -o -name '*.js' -o -name '*.html' -o -name '*.glb' \\) -exec brotli --best --keep --force {} +"
 ]
 
 [start]
-# We point to the 'server' executable inside the directory we smuggled in
-cmd = "/app/bin/farm-blazer/server --root /app/bin/farm-blazer/out --port 80"
+# CRITICAL FIXES FOR PRODUCTION:
+# 1. --host 0.0.0.0: Binds to all interfaces (fixes "Connection Refused 111")
+# 2. --port ${PORT:-80}: Uses the port assigned by Sevalla/Kinsta (or 80 default)
+# 3. --compression-static=true: Tells server to look for the .br files we created
+cmd = "/app/bin/farm-blazer/server --root /app/bin/farm-blazer/out --host 0.0.0.0 --port ${PORT:-80} --compression-static=true --cache-control-headers=true"
