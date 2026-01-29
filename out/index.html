@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Swarm Defense: Logistics Commander</title>
+    <!-- Import Sci-Fi Font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;600&display=swap" rel="stylesheet">
+    
+    <style>
+        /* --- CORE LAYOUT --- */
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: 'Rajdhani', sans-serif;
+            color: white;
+            user-select: none;
+        }
+
+        /* --- BACKGROUND FX --- */
+        .bg-grid {
+            position: absolute;
+            width: 200%;
+            height: 200%;
+            top: -50%;
+            left: -50%;
+            background-image: 
+                linear-gradient(rgba(0, 255, 242, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 255, 242, 0.03) 1px, transparent 1px);
+            background-size: 40px 40px;
+            transform: perspective(500px) rotateX(60deg);
+            animation: grid-move 20s linear infinite;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        @keyframes grid-move {
+            0% { transform: perspective(500px) rotateX(60deg) translateY(0); }
+            100% { transform: perspective(500px) rotateX(60deg) translateY(40px); }
+        }
+
+        .scanlines {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.2));
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 20;
+            opacity: 0.6;
+        }
+
+        /* --- GAME CANVAS --- */
+        canvas {
+            display: block;
+            width: 100% !important;
+            height: 100% !important;
+            touch-action: none;
+            position: absolute;
+            top: 0; left: 0;
+            z-index: 1;
+            opacity: 0;
+            transition: opacity 1.5s ease-in-out;
+        }
+
+        /* --- UI CONTAINER --- */
+        #loader {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: radial-gradient(circle at center, rgba(10, 20, 40, 0.9) 0%, #000000 100%);
+            transition: opacity 0.5s ease-out;
+            backdrop-filter: blur(5px);
+        }
+
+        /* --- TYPOGRAPHY --- */
+        .title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 4rem;
+            font-weight: 900;
+            letter-spacing: 6px;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            color: #fff;
+            text-shadow: 0 0 20px rgba(0, 243, 255, 0.6);
+            position: relative;
+        }
+
+        .subtitle {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.2rem;
+            color: #00f3ff;
+            margin-bottom: 60px;
+            letter-spacing: 8px;
+            text-transform: uppercase;
+            border-bottom: 1px solid rgba(0, 243, 255, 0.3);
+            padding-bottom: 10px;
+        }
+
+        /* --- LOADING BAR --- */
+        .loading-wrapper {
+            width: 400px;
+            position: relative;
+        }
+
+        .progress-border {
+            width: 100%;
+            height: 14px;
+            border: 2px solid #333;
+            padding: 3px;
+            border-radius: 2px;
+            background: rgba(0,0,0,0.5);
+            box-shadow: 0 0 15px rgba(0, 243, 255, 0.1);
+        }
+
+        .progress-bar {
+            width: 0%;
+            height: 100%;
+            background: repeating-linear-gradient(
+                45deg,
+                #00c6ff,
+                #00c6ff 10px,
+                #0072ff 10px,
+                #0072ff 20px
+            );
+            box-shadow: 0 0 15px #0072ff;
+            transition: width 0.1s linear;
+        }
+
+        #status {
+            margin-top: 15px;
+            font-size: 1rem;
+            color: #00f3ff;
+            font-family: 'Rajdhani', monospace;
+            text-align: right;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            height: 20px;
+        }
+
+        /* --- START BUTTON --- */
+        #start-btn {
+            display: none; /* Hidden until loaded */
+            font-family: 'Orbitron', sans-serif;
+            padding: 20px 60px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #00f3ff;
+            background: rgba(0, 243, 255, 0.1);
+            border: 2px solid #00f3ff;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 4px;
+            box-shadow: 0 0 20px rgba(0, 243, 255, 0.2);
+            transition: all 0.2s ease;
+            clip-path: polygon(10% 0, 100% 0, 100% 70%, 90% 100%, 0 100%, 0 30%);
+        }
+
+        #start-btn:hover {
+            background: #00f3ff;
+            color: #000;
+            box-shadow: 0 0 40px rgba(0, 243, 255, 0.8);
+            transform: translateY(-2px);
+        }
+
+        #start-btn:active {
+            transform: translateY(1px);
+        }
+
+        /* --- ERROR STATE --- */
+        .error { color: #ff3333 !important; text-shadow: 0 0 10px #ff0000; }
+    </style>
+</head>
+<body>
+
+    <!-- Visual FX -->
+    <div class="bg-grid"></div>
+    <div class="scanlines"></div>
+
+    <!-- Loading UI -->
+    <div id="loader">
+        <div class="title">SWARM DEFENSE</div>
+        <div class="subtitle">Logistics Commander</div>
+        
+        <!-- Phase 1: Downloader -->
+        <div id="loading-ui" class="loading-wrapper">
+            <div class="progress-border">
+                <div id="progress-bar" class="progress-bar"></div>
+            </div>
+            <div id="status">ESTABLISHING UPLINK...</div>
+        </div>
+
+        <!-- Phase 2: Start Button -->
+        <button id="start-btn">ENGAGE SYSTEM</button>
+    </div>
+
+    <script type="module">
+        import init from './farm-blazer.js';
+
+        // CONFIG: Ensure this matches your WASM filename
+        const WASM_PATH = './farm-blazer_bg.wasm';
+
+        const statusEl = document.getElementById('status');
+        const barEl = document.getElementById('progress-bar');
+        const loaderEl = document.getElementById('loader');
+        const loadUiEl = document.getElementById('loading-ui');
+        const startBtn = document.getElementById('start-btn');
+        
+        let wasmBlobUrl = null;
+
+        // --- STEP 1: DOWNLOAD ASSETS ---
+        async function downloadGame() {
+            try {
+                const response = await fetch(WASM_PATH);
+                
+                if (!response.ok) {
+                    throw new Error(`Signal Lost: ${response.status} ${response.statusText}`);
+                }
+
+                const contentLength = response.headers.get('Content-Length');
+                const total = parseInt(contentLength, 10);
+                let loaded = 0;
+
+                const reader = response.body.getReader();
+                const chunks = [];
+
+                statusEl.innerText = "DOWNLOADING CORE ASSETS...";
+
+                while(true) {
+                    const {done, value} = await reader.read();
+                    if (done) break;
+                    
+                    chunks.push(value);
+                    loaded += value.length;
+
+                    if(total) {
+                        const percent = (loaded / total) * 100;
+                        barEl.style.width = `${percent}%`;
+                        statusEl.innerText = `BUFFERING: ${Math.round(percent)}%`;
+                    } else {
+                         statusEl.innerText = `DOWNLOADING: ${(loaded/1024/1024).toFixed(2)} MB`;
+                    }
+                }
+
+                const blob = new Blob(chunks, { type: 'application/wasm' });
+                wasmBlobUrl = URL.createObjectURL(blob);
+
+                statusEl.innerText = "SYSTEM READY";
+                barEl.style.width = '100%';
+                
+                setTimeout(() => {
+                    loadUiEl.style.display = 'none';
+                    startBtn.style.display = 'block';
+                }, 400);
+                
+            } catch (err) {
+                console.error(err);
+                statusEl.classList.add('error');
+                statusEl.innerText = "CONNECTION FAILED. CHECK CONSOLE.";
+                barEl.style.backgroundColor = "red";
+            }
+        }
+
+        // --- STEP 2: INITIALIZE GAME ---
+        async function startGame() {
+            try {
+                startBtn.innerText = "INITIALIZING...";
+                startBtn.style.opacity = "0.7";
+                startBtn.style.cursor = "wait";
+
+                // --- THE FIX IS HERE ---
+                try {
+                    await init(wasmBlobUrl);
+                } catch (e) {
+                    // Bevy/Winit throws a specific exception to break the loop and start rendering.
+                    // We must detect this string and treat it as a SUCCESS, not a failure.
+                    if (e.message.indexOf('Using exceptions for control flow') === -1) {
+                        throw e; // If it's NOT the control flow error, re-throw it (it's a real crash)
+                    }
+                }
+                // -----------------------
+
+                URL.revokeObjectURL(wasmBlobUrl);
+                
+                loaderEl.style.opacity = '0';
+                
+                setTimeout(() => {
+                    loaderEl.remove();
+                    const canvas = document.querySelector('canvas');
+                    if(canvas) {
+                        canvas.style.opacity = '1';
+                        canvas.focus();
+                    }
+                }, 500);
+
+            } catch (err) {
+                console.error("Boot Failure:", err);
+                startBtn.classList.add('error');
+                startBtn.innerText = "BOOT FAILURE";
+                startBtn.style.borderColor = "red";
+                startBtn.style.color = "red";
+            }
+        }
+
+        startBtn.addEventListener('click', startGame);
+        downloadGame();
+    </script>
+</body>
+</html>
