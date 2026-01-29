@@ -1,6 +1,5 @@
 [phases.setup]
-nixPkgs = ["caddy", "binaryen", "rustup"]
-aptPkgs = ["gcc"]
+nixPkgs = ["caddy", "binaryen", "rustup", "gcc", "pkg-config", "openssl", "fontconfig"]
 
 [phases.build]
 cmds = [
