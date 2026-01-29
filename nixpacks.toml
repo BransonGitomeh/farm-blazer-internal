@@ -19,11 +19,11 @@ cmds = [
     "cargo build --release --target wasm32-unknown-unknown",
     
     # 4. Generate JS/WASM directly into our payload folder
-    # Note: Rust replaces hyphens with underscores in file names (farm_blazer.wasm)
-    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./bin/farm-blazer --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm_blazer.wasm",
+    # Note: Rust replaces hyphens with underscores in file names (farm-blazer.wasm)
+    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./bin/farm-blazer --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm-blazer.wasm",
     
     # 5. Optimize WASM
-    "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./bin/farm-blazer/farm_blazer_bg.wasm ./bin/farm-blazer/farm_blazer_bg.wasm",
+    "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./bin/farm-blazer/farm-blazer_bg.wasm ./bin/farm-blazer/farm-blazer_bg.wasm",
     
     # 6. Copy Assets & HTML
     # Ensure index.html exists in your repo root!
