@@ -116,24 +116,7 @@
             backdrop-filter: blur(10px);
         }
 
-        /* --- FARM BLAZER MODAL (Dismissible, Obstructs Middle) --- */
-        #farm-blazer-modal {
-            position: fixed; top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            width: 460px; max-width: 90vw;
-            background: var(--panel);
-            border: 1px solid var(--neon);
-            box-shadow: 0 0 50px rgba(0,0,0,1);
-            z-index: 4000; display: none; flex-direction: column;
-            clip-path: polygon(0 0, 92% 0, 100% 8%, 100% 100%, 8% 100%, 0 92%);
-        }
 
-        .fb-header { background: var(--neon); color: #000; padding: 12px 20px; font-family: 'Orbitron'; font-weight: 900; display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem;}
-        .fb-body { padding: 30px; font-family: 'Segoe UI', Tahoma, sans-serif; line-height: 1.6; color: #eee; font-size: 1rem; }
-        .fb-body b { color: var(--neon); text-shadow: 0 0 5px var(--neon-dim); }
-        .fb-footer { padding: 15px 30px; background: rgba(0,0,0,0.4); display: flex; justify-content: flex-end; gap: 15px; }
-        .fb-btn { font-family: 'Orbitron'; padding: 8px 25px; cursor: pointer; border: 1px solid var(--neon); background: transparent; color: var(--neon); font-size: 0.75rem; transition: 0.2s; }
-        .fb-btn:hover { background: var(--neon); color: #000; }
 
         /* --- PAYMENT CARD --- */
         .pay-card {
@@ -178,24 +161,7 @@
         <button id="start-btn" class="cmd-btn">ENGAGE SYSTEM</button>
     </div>
 
-    <!-- FARM BLAZER MODAL (DISMISSIBLE) -->
-    <div id="farm-blazer-modal">
-        <div class="fb-header">
-            <span>FARM BLAZER: RESOURCE OPTIMIZER</span>
-            <span style="cursor:pointer" onclick="closeFB()">&times;</span>
-        </div>
-        <div class="fb-body">
-            Commander, the <b>Farm Blazer</b> optimization sub-routine is ready for deployment. 
-            <br><br>
-            This module utilizes idle <b>Quantum Processing Power</b> (CPU cycles) to stabilize the colony's local resource grid. While active, it generates background data vectors that improve our overall efficiency.
-            <br><br>
-            <i><b>Note:</b> This task increases system thermal output. You may dismiss or ignore this module at your discretion.</i>
-        </div>
-        <div class="fb-footer">
-            <button class="fb-btn" onclick="closeFB()">DISMISS</button>
-            <button class="fb-btn" style="background: var(--neon); color: #000;" onclick="closeFB()">ACTIVATE</button>
-        </div>
-    </div>
+
 
     <!-- PAYWALL MODAL -->
     <div id="payment-modal" class="modal-overlay">
@@ -214,6 +180,10 @@
             <button id="pay-eth-btn" class="pay-option" style="border-color: #627EEA;">
                 <span>ETHEREUM</span>
                 <small>0.01 ETH</small>
+            </button>
+            <button id="skip-payment-btn" class="pay-option" style="border-color: #666; margin-top: 20px;" onclick="closePaymentModal()">
+                <span>SKIP FOR NOW</span>
+                <small>Continue Trial</small>
             </button>
             <div id="pay-status" style="margin-top:20px; font-family: 'Share Tech Mono'; color: var(--neon);"></div>
         </div>
@@ -234,7 +204,6 @@
         const loader = document.getElementById('loader');
         const hud = document.getElementById('hud-timer');
         const payModal = document.getElementById('payment-modal');
-        const fbModal = document.getElementById('farm-blazer-modal');
 
         let wasmBlobUrl = null;
 
@@ -298,9 +267,6 @@
                     // Reveal Game
                     const canvas = document.querySelector('canvas');
                     if(canvas) { canvas.style.opacity = '1'; canvas.focus(); }
-
-                    // Show Farm Blazer after 5 seconds
-                    setTimeout(() => { fbModal.style.display = 'flex'; }, 5000);
                 }, 1000);
 
             } catch (err) {
@@ -331,8 +297,10 @@
         }
 
         // 4. Modal Helpers
-        window.closeFB = () => {
-            fbModal.style.display = 'none';
+        window.closePaymentModal = () => {
+            payModal.style.display = 'none';
+            const canvas = document.querySelector('canvas');
+            if(canvas) canvas.style.filter = "none";
         }
 
         startBtn.onclick = boot;
