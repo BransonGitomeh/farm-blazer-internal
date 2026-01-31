@@ -490,52 +490,61 @@ fn rotate_mask_left(mask: u8, steps: u8) -> u8 {
 
 fn get_connection_model(mask: u8) -> (&'static str, u8) {
     let m6 = mask & 0b111111;
-    let count = m6.count_ones();
+    if m6 == 0 { return ("straight", 0); }
 
-    if count <= 1 {
-        // Find the one bit that is set to orient the "end" or "start"
-        for i in 0..6 {
-            if (m6 >> i) & 1 == 1 { return ("end", i as u8); }
+    // This table maps a "normalized" bitmask to the specific Kenney asset.
+    // Normalized means we rotate the hex until the pattern matches one of these.
+    let patterns = [
+        // --- 1 Connection ---
+        (0b000001, "end"),
+
+        // --- 2 Connections ---
+        (0b001001, "straight"),      // Gap 3 (Opposite)
+        (0b000101, "corner"),        // Gap 2 (Wide)
+        (0b000011, "corner-sharp"),  // Gap 1 (Sharp)
+
+        // --- 3 Connections (Kenney lettered intersections) ---
+        (0b000111, "intersectionA"), // 3 Adjacent (W-SW-SE)
+        (0b001011, "intersectionB"), // 2 Adjacent + 1 Gap (SW-SE + E)
+        (0b010011, "intersectionC"), // 2 Adjacent + 2 Gap (SW-SE + NE)
+        (0b010101, "intersectionD"), // Balanced Y (SE + NE + W)
+
+        // --- 4 Connections ---
+        (0b001111, "intersectionE"), // 4 Adjacent
+        (0b010111, "intersectionF"), // 3 Adjacent + 1 Gap
+        (0b011011, "intersectionG"), // 2 pairs (SW-SE + NW-NE)
+
+        // --- 5 Connections ---
+        (0b011111, "intersectionH"), // 5 Adjacent
+
+        // --- 6 Connections ---
+        (0b111111, "crossing"),
+    ];
+
+    // Try all 6 rotations to find a match
+    for r in 0..6 {
+        let rotated_mask = rotate_mask_right(m6, r);
+        for (pattern, model_name) in patterns.iter() {
+            if rotated_mask == *pattern {
+                // We return r as the number of 60-degree steps to rotate the model.
+                return (model_name, r);
+            }
         }
-        return ("straight", 0);
     }
 
-    // Find all active indices
-    let mut indices = Vec::new();
-    for i in 0..6 {
-        if (m6 >> i) & 1 == 1 { indices.push(i); }
-    }
-
-    if count == 2 {
-        let diff = (indices[1] as i32 - indices[0] as i32).abs();
-        let gap = if diff > 3 { 6 - diff } else { diff };
-
-        match gap {
-            1 => {
-                // Sharp Turn (Neighbors are next to each other)
-                // Default model "corner-sharp" usually connects face 4 and 3
-                // We rotate so Face 0 and 1 connect
-                return ("corner-sharp", indices[0] as u8);
-            }
-            2 => {
-                // Wide Turn (1 neighbor between them)
-                // Default model "corner" usually connects face 4 and 2
-                return ("corner", indices[0] as u8);
-            }
-            _ => {
-                // Straight (Opposite faces)
-                // Default model "straight" connects face 4 and 1
-                // indices[0] is one end, we rotate based on that
-                return ("straight", indices[0] as u8);
-            }
-        }
-    }
-
-    // Default for complex junctions
-    if count == 3 { return ("intersectionA", indices[0] as u8); }
-    ("crossing", 0)
+    // Ultimate fallback
+    ("straight", 0)
 }
 
+/// Rotates bits right within a 6-bit space
+fn rotate_mask_right(mask: u8, steps: u8) -> u8 {
+    let mut m = mask & 0b111111;
+    for _ in 0..steps {
+        let bit0 = m & 1;
+        m = (m >> 1) | (bit0 << 5);
+    }
+    m
+}
 
 
 // --- TUNING CONSTANTS ---
