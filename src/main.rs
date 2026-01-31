@@ -361,12 +361,16 @@ fn spawn_hex(
     )).set_parent(parent_id);
 
     // 7. Spawn Physics Collider
-    if let Some(col) = collider {
+    if let Some(mut col) = collider {
+        // Scale the collider to match the massive world scale
+        // A height of 2.0 (total 4.0) ensures a thick enough "floor"
+        let collider_thickness = 2.0; 
+        
         commands.spawn((
             RigidBody::Fixed,
-            col,
-            // Offset collider slightly up so it covers the model volume
-            Transform::from_xyz(0.0, 1.0, 0.0), 
+            Collider::cylinder(collider_thickness, settings.hex_size * 0.95),
+            // Position the top of the collider at Y = 0
+            Transform::from_xyz(0.0, -collider_thickness, 0.0), 
         )).set_parent(parent_id);
     }
 
@@ -950,7 +954,9 @@ fn main() {
 fn bob_system(time: Res<Time>, mut q: Query<(&mut Transform, &Bob)>) {
     let t = time.elapsed_secs();
     for (mut transform, bob) in q.iter_mut() {
-        transform.translation.y = bob.base_y + (t * bob.speed + bob.offset).sin() * bob.amount;
+        // We only want to offset the VISUALS, not the physics body
+        // Note: For this to work perfectly, ensure Bob is only on the Child entity
+        transform.translation.y = (t * bob.speed + bob.offset).sin() * bob.amount;
     }
 }
 
@@ -973,7 +979,9 @@ fn setup_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         bevy::render::render_resource::TextureDimension::D2,
         data,
         bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-        bevy::render::render_asset::RenderAssetUsages::default(),
+        // To this:
+        bevy::render::render_asset::RenderAssetUsages::MAIN_WORLD | 
+        bevy::render::render_asset::RenderAssetUsages::RENDER_WORLD,
     );
     image.sampler = ImageSampler::Descriptor(SamplerDescriptor {
         address_mode_u: AddressMode::Repeat,
@@ -1073,7 +1081,7 @@ fn setup_player(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
             ..default()
         })),
         // 2. SPAWN HIGHER (20.0 instead of 10.0)
-        Transform::from_xyz(0.0, 20.0, 0.0), 
+        Transform::from_xyz(0.0, 150.0, 0.0), // Spawn hig
         Player { 
             fire_timer: 0.0,
             jump_count: 0,
@@ -1540,7 +1548,7 @@ fn worker_spawner(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let worker_mesh = meshes.add(Capsule3d::new(0.25, 0.5));
-    let worker_mat = materials.add(StandardMaterial { base_color: Color::srgb(1.0, 1.0, 0.0), ..default() });
+    let worker_mat = materials.add(StandardMaterial { base_color: Color::srgb(1.0, 200.0, 0.0), ..default() });
     
     for (mut hut, t) in huts.iter_mut() {
         if hut.worker_count < hut.max_workers {
@@ -1550,13 +1558,13 @@ fn worker_spawner(
                 commands.spawn((
                     Mesh3d(worker_mesh.clone()),
                     MeshMaterial3d(worker_mat.clone()),
-                    Transform::from_translation(t.translation() + Vec3::new(1.0, 40.0, 0.0)),
+                    Transform::from_translation(t.translation() + Vec3::new(1.0, 150.0, 0.0)),
                     Worker { carrying: false, target_drill: None, target_storage: None },
                     Health { current: 20.0, max: 20.0 },
                     RigidBody::Dynamic, Collider::capsule_y(0.25, 0.25), LockedAxes::ROTATION_LOCKED,
                     Velocity::default(),
                     Steer { speed: WORKER_SPEED, ..default() },
-                    Bob { speed: 5.0, amount: 0.15, base_y: 0.5, offset: rand::random::<f32>() * PI },
+                    Bob { speed: 5.0, amount: 0.15, base_y: 0.0, offset: rand::random::<f32>() * PI },
                 ));
             }
         }
@@ -2291,7 +2299,7 @@ fn enemy_spawner(
         if let Ok(p_t) = player_q.get_single() {
             let angle = rand::random::<f32>() * PI * 2.0;
             // Spawn distance doubled for 2x world scale, and spawn high above ground (100 units)
-            let pos = p_t.translation + Vec3::new(angle.cos() * 160.0, 100.0, angle.sin() * 160.0);
+            let pos = p_t.translation + Vec3::new(angle.cos() * 160.0, 250.0, angle.sin() * 160.0);
             
             let mut rng = rand::thread_rng();
             let is_giant = rng.r#gen_bool(0.15); // 15% chance for giants
@@ -2311,7 +2319,7 @@ fn enemy_spawner(
                 RigidBody::Dynamic, Collider::capsule_y(0.5, 0.4), LockedAxes::ROTATION_LOCKED,
                 Velocity::default(),
                 Steer { speed: 15.0, ..default() },
-                Bob { speed: 3.0 + rng.r#gen::<f32>() * 2.0, amount: 0.2 * scale, base_y: 2.0, offset: rng.r#gen::<f32>() * PI },
+                Bob { speed: 3.0 + rng.r#gen::<f32>() * 2.0, amount: 0.2 * scale, base_y: 0.0, offset: rng.r#gen::<f32>() * PI },
             ));
         }
     }
@@ -2377,8 +2385,9 @@ fn steering_system(
         let mut steer_acc = Vec3::ZERO;
         
         if let Some(target) = steer.target {
-            // 1. SEEK
-            let desired = (target - t1.translation).normalize_or_zero() * steer.speed;
+            // Flatten the target to the unit's current height to prevent "diving"
+            let flat_target = Vec3::new(target.x, t1.translation.y, target.z);
+            let desired = (flat_target - t1.translation).normalize_or_zero() * steer.speed;
             steer_acc += (desired - v.linvel) * 2.0;
         } else {
             // BRAKE

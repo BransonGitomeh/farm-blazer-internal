@@ -40,4 +40,4 @@ cmds = [
 ]
 
 [start]
-cmd = "/app/bin/farm-blazer/server --root /app/bin/farm-blazer/out --host 0.0.0.0 --port ${PORT:-80} --compression-static=true --cache-control-headers=true"
+cmd = "/app/bin/farm-blazer/server --root /app/bin/farm-blazer/out --host 0.0.0.0 --port ${PORT:-80} --compression-static=true --cache-control-headers=true --mime-types=wasm:application/wasm"
