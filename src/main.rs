@@ -743,13 +743,42 @@ struct Particle {
 struct Steer {
     pub target: Option<Vec3>,
     pub speed: f32,
+    pub avoid_obstacles: bool,
+    pub stay_on_ground: bool,
+    pub can_jump: bool,
+    pub last_jump_time: f32,
 }
 
 impl Default for Steer {
     fn default() -> Self {
-        Self { target: None, speed: 20.0 }
+        Self { 
+            target: None, 
+            speed: 20.0,
+            avoid_obstacles: true,
+            stay_on_ground: true,
+            can_jump: true,
+            last_jump_time: 0.0,
+        }
     }
 }
+
+#[derive(Component)]
+struct PathFollower {
+    waypoints: Vec<Vec3>,
+    current_waypoint: usize,
+    recalc_timer: f32,
+}
+
+impl Default for PathFollower {
+    fn default() -> Self {
+        Self {
+            waypoints: Vec::new(),
+            current_waypoint: 0,
+            recalc_timer: 0.0,
+        }
+    }
+}
+
 
 #[derive(Component)]
 struct WowCameraRig {
