@@ -263,7 +263,7 @@ fn spawn_hex(
         TileType::Mountain => { glb_path = "stone-mountain.glb".into(); },
         TileType::Castle => { building_path = Some("building-castle.glb"); spawn_grass_base = true; },
         TileType::House => { building_path = Some("building-house.glb"); spawn_grass_base = true; },
-        TileType::Mill => { building_path = Some("building- mill.glb"); spawn_grass_base = true; },
+        TileType::Mill => { building_path = Some("building-mill.glb"); spawn_grass_base = true; },
         TileType::WatchTower => { building_path = Some("building-tower.glb"); spawn_grass_base = true; },
         TileType::Dock => { building_path = Some("building-dock.glb"); rotation_y = PI; },
         TileType::Lumber => { glb_path = "dirt-lumber.glb".into(); },
