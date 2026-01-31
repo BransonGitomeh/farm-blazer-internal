@@ -29,14 +29,12 @@ struct WorldSettings {
 impl Default for WorldSettings {
     fn default() -> Self {
         Self {
-            // Kenney's Hexagons are usually unit size 1.0 or 2.0.
-            // If scale is 43.5, hex_size needs to match tight packing.
-            // Tweak hex_size to eliminate gaps. 
-            // If models are scaled ~40x, size ~23-25 is usually correct.
-            hex_size: 25.0, 
-            tile_scale: 43.0, 
-            render_distance: 8,
-            island_size: 6.0, 
+            // Doubled world scale for larger gameplay area
+            // hex_size and tile_scale increased 2x
+            hex_size: 50.0, 
+            tile_scale: 86.0, 
+            render_distance: 16,
+            island_size: 12.0, 
         }
     }
 }
@@ -856,7 +854,7 @@ fn main() {
         // FrameTimeDiagnosticsPlugin, // Uncomment for FPS
         // LogDiagnosticsPlugin::default(),
         .init_state::<GameState>()
-        .insert_resource(PlayerStats { scrap: 600, max_scrap: 1000, unit_count: 0, unit_cap: 5 })
+        .insert_resource(PlayerStats { scrap: 2000, max_scrap: 3000, unit_count: 0, unit_cap: 5 })
         .insert_resource(BuildManager { tool: BuildTool::Drill, rotation_idx: 0, is_drag_building: false, drag_start: None })
         .init_resource::<WorldCursor>()
         .init_resource::<SelectionState>()
@@ -869,7 +867,7 @@ fn main() {
         .insert_resource(ClearColor(Color::BLACK))
         .add_systems(PreStartup, setup_assets)
         .add_systems(Startup, setup_hex_resources)
-        .add_systems(Startup, (setup_lighting_only, setup_player, setup_ui, setup_cursor_visuals))
+        .add_systems(Startup, (setup_lighting_only, setup_player, setup_starting_village, setup_ui, setup_cursor_visuals))
         .add_systems(Update, (
             apply_mesh_colliders,
             update_hex_map, 
@@ -1061,6 +1059,100 @@ fn setup_player(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
     });
 }
 
+fn setup_starting_village(
+    mut commands: Commands, 
+    mut meshes: ResMut<Assets<Mesh>>, 
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    assets: Res<GameAssets>,
+) {
+    // Village center at origin
+    let village_center = Vec3::new(0.0, 0.0, 0.0);
+    
+    // Wall material
+    let wall_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.4, 0.35, 0.3),
+        base_color_texture: Some(assets.debug_tex.clone()),
+        ..default()
+    });
+    
+    // Resource structure material
+    let resource_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.2, 0.6, 0.8),
+        base_color_texture: Some(assets.debug_tex.clone()),
+        emissive: LinearRgba::new(0.2, 0.6, 0.8, 1.0),
+        ..default()
+    });
+    
+    // Create perimeter walls (octagonal layout)
+    let wall_radius = 30.0;
+    let wall_segments = 8;
+    for i in 0..wall_segments {
+        let angle = (i as f32 / wall_segments as f32) * PI * 2.0;
+        let x = village_center.x + angle.cos() * wall_radius;
+        let z = village_center.z + angle.sin() * wall_radius;
+        let wall_rotation = Quat::from_rotation_y(angle + PI / 2.0);
+        
+        commands.spawn((
+            Mesh3d(meshes.add(Cuboid::new(8.0, 6.0, 1.0))),
+            MeshMaterial3d(wall_mat.clone()),
+            Transform::from_xyz(x, 3.0, z).with_rotation(wall_rotation),
+            Wall,
+            Structure,
+            Health { current: 500.0, max: 500.0 },
+            RigidBody::Fixed,
+            Collider::cuboid(4.0, 3.0, 0.5),
+        ));
+    }
+    
+    // Spawn 3 drills inside the village
+    let drill_positions = [
+        Vec3::new(-10.0, 1.0, -10.0),
+        Vec3::new(10.0, 1.0, -10.0),
+        Vec3::new(0.0, 1.0, 10.0),
+    ];
+    
+    for pos in drill_positions.iter() {
+        commands.spawn((
+            Mesh3d(meshes.add(Cylinder::new(2.0, 3.0))),
+            MeshMaterial3d(resource_mat.clone()),
+            Transform::from_translation(village_center + *pos),
+            Drill { 
+                timer: Timer::from_seconds(5.0, TimerMode::Repeating), 
+                storage: 0 
+            },
+            Structure,
+            Health { current: 200.0, max: 200.0 },
+            RigidBody::Fixed,
+            Collider::cylinder(1.5, 2.0),
+        )).with_children(|parent| {
+            parent.spawn(PointLight { 
+                color: Color::srgb(0.2, 0.8, 1.0), 
+                intensity: 500.0, 
+                range: 15.0, 
+                ..default() 
+            });
+        });
+    }
+    
+    // Spawn 2 storage bins
+    let storage_positions = [
+        Vec3::new(-5.0, 1.5, 0.0),
+        Vec3::new(5.0, 1.5, 0.0),
+    ];
+    
+    for pos in storage_positions.iter() {
+        commands.spawn((
+            Mesh3d(meshes.add(Cuboid::new(4.0, 3.0, 4.0))),
+            MeshMaterial3d(resource_mat.clone()),
+            Transform::from_translation(village_center + *pos),
+            StorageBin,
+            Structure,
+            Health { current: 300.0, max: 300.0 },
+            RigidBody::Fixed,
+            Collider::cuboid(2.0, 1.5, 2.0),
+        ));
+    }
+}
 
 fn setup_cursor_visuals(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>) {
     // Fancy Cursor Entity: A super thin flat torus base with a pulsing vertical pointer
@@ -2112,8 +2204,21 @@ fn enemy_spawner(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     player_q: Query<&Transform, With<Player>>,
+    enemies_q: Query<Entity, With<Enemy>>,
 ) {
     if !phase.is_combat { return; }
+    
+    // Limit max enemies to prevent RAM overflow
+    const MAX_ENEMIES: usize = 80;
+    let current_enemy_count = enemies_q.iter().count();
+    
+    // If we're at max, remove oldest enemies
+    if current_enemy_count >= MAX_ENEMIES {
+        if let Some(oldest) = enemies_q.iter().next() {
+            commands.entity(oldest).despawn_recursive();
+        }
+        return;
+    }
     
     let spawn_delay = (1.5 - (phase.wave as f32 * 0.05)).max(0.3);
     *timer += time.delta_secs();
@@ -2122,7 +2227,8 @@ fn enemy_spawner(
         *timer = 0.0;
         if let Ok(p_t) = player_q.get_single() {
             let angle = rand::random::<f32>() * PI * 2.0;
-            let pos = p_t.translation + Vec3::new(angle.cos() * 80.0, 50.0, angle.sin() * 80.0);
+            // Spawn distance doubled for 2x world scale, and spawn high above ground (100 units)
+            let pos = p_t.translation + Vec3::new(angle.cos() * 160.0, 100.0, angle.sin() * 160.0);
             
             let mut rng = rand::thread_rng();
             let is_giant = rng.r#gen_bool(0.15); // 15% chance for giants
