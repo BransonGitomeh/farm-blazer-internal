@@ -218,11 +218,12 @@ fn spawn_hex(
 
     // 3. Selection Logic
     match my_type {
+        // Inside spawn_hex, replace the River/Path match arm:
         TileType::River | TileType::Path => {
             let is_river = my_type == TileType::River;
             let prefix = if is_river { "river" } else { "path" };
 
-            // Connectivity Logic
+            // Pointy-topped neighbor directions: 0:E, 1:SE, 2:SW, 3:W, 4:NW, 5:NE
             let neighbors = [(q+1, r), (q, r+1), (q-1, r+1), (q-1, r), (q, r-1), (q+1, r-1)];
             let mut mask = 0u8;
             for (i, (nq, nr)) in neighbors.iter().enumerate() {
@@ -238,10 +239,15 @@ fn spawn_hex(
 
             let (model, rot_steps) = get_connection_model(mask);
             glb_path = format!("{}-{}.glb", prefix, model);
-            rotation_y = -(rot_steps as f32) * PI / 3.0;
+            
+            // --- THE FIX ---
+            // 1. Convert rot_steps (0-5) to radians (negative for CW rotation)
+            // 2. Add an offset of 4.0 steps (240 degrees) because Kenney models 
+            // usually start at the NW face (index 4), and we want to align to index 0.
+            rotation_y = -((rot_steps as f32 + 3.0) * PI / 3.0);
 
             if is_river {
-                y_offset = -0.1; 
+                y_offset = -0.15; 
             } else {
                 spawn_grass_base = true;
                 y_offset = 0.05;
@@ -475,44 +481,59 @@ fn get_intersection_model(mask: u8) -> (&'static str, u8) {
 fn rotate_mask_left(mask: u8, steps: u8) -> u8 {
     let mut m = mask & 0b111111;
     for _ in 0..steps {
-        let high = (m >> 5) & 1;
-        m = ((m << 1) & 0b111111) | high;
+        // Shift bits left, wrap bit 5 around to bit 0
+        let bit5 = (m >> 5) & 1;
+        m = ((m << 1) & 0b111111) | bit5;
     }
     m
 }
 
 fn get_connection_model(mask: u8) -> (&'static str, u8) {
     let m6 = mask & 0b111111;
-    if m6 == 0 { return ("straight", 0); }
+    let count = m6.count_ones();
 
-    // Map patterns to your specific file list
-    // Pattern bits: 0:E, 1:SE, 2:SW, 3:W, 4:NW, 5:NE
-    let patterns = [
-        ("start",         0b000001), 
-        ("end",           0b000001), 
-        ("straight",      0b001001), 
-        ("corner",        0b000101), // Wide 120 deg
-        ("corner-sharp",  0b000011), // Sharp 60 deg
-        ("intersectionA", 0b000111), 
-        ("intersectionB", 0b001011), 
-        ("intersectionC", 0b010011), 
-        ("intersectionD", 0b010101), 
-        ("intersectionE", 0b001111),
-        ("intersectionF", 0b010111),
-        ("intersectionG", 0b011011),
-        ("intersectionH", 0b011111),
-        ("crossing",      0b111111),
-    ];
+    if count <= 1 {
+        // Find the one bit that is set to orient the "end" or "start"
+        for i in 0..6 {
+            if (m6 >> i) & 1 == 1 { return ("end", i as u8); }
+        }
+        return ("straight", 0);
+    }
 
-    for r in 0..6 {
-        let rotated = rotate_mask_left(m6, r);
-        for (name, pattern) in patterns.iter() {
-            if rotated == *pattern {
-                return (name, r);
+    // Find all active indices
+    let mut indices = Vec::new();
+    for i in 0..6 {
+        if (m6 >> i) & 1 == 1 { indices.push(i); }
+    }
+
+    if count == 2 {
+        let diff = (indices[1] as i32 - indices[0] as i32).abs();
+        let gap = if diff > 3 { 6 - diff } else { diff };
+
+        match gap {
+            1 => {
+                // Sharp Turn (Neighbors are next to each other)
+                // Default model "corner-sharp" usually connects face 4 and 3
+                // We rotate so Face 0 and 1 connect
+                return ("corner-sharp", indices[0] as u8);
+            }
+            2 => {
+                // Wide Turn (1 neighbor between them)
+                // Default model "corner" usually connects face 4 and 2
+                return ("corner", indices[0] as u8);
+            }
+            _ => {
+                // Straight (Opposite faces)
+                // Default model "straight" connects face 4 and 1
+                // indices[0] is one end, we rotate based on that
+                return ("straight", indices[0] as u8);
             }
         }
     }
-    ("straight", 0)
+
+    // Default for complex junctions
+    if count == 3 { return ("intersectionA", indices[0] as u8); }
+    ("crossing", 0)
 }
 
 
