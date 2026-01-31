@@ -206,14 +206,15 @@ fn spawn_hex(
     let pos = Vec3::new(x, 0.0, z);
 
     let my_type = *grid.tile_types.get(&(q, r)).unwrap_or(&TileType::Water);
+    let mut rng = rand::thread_rng();
 
-    // 2. State Variables for Model Selection
-    let mut glb_path: String;
+    // 2. Setup Variables
+    let mut glb_path = "grass.glb".to_string();
     let mut rotation_y = 0.0;
     let mut y_offset = 0.0;
-    let mut collider = Some(Collider::cylinder(0.5, settings.hex_size * 0.9)); // Default ground collider
-    let mut spawn_grass_base = false; // Does this tile need a grass tile underneath?
-    let mut can_spawn_props = false;  // Can we put random trees/rocks here?
+    let mut spawn_grass_base = false;
+    let mut prop_path: Option<&str> = None;
+    let mut building_path: Option<&str> = None;
 
     // 3. Selection Logic
     match my_type {
@@ -221,115 +222,53 @@ fn spawn_hex(
             let is_river = my_type == TileType::River;
             let prefix = if is_river { "river" } else { "path" };
 
-            // -- Neighbor Connectivity Logic --
-            let neighbors = [
-                (q + 1, r), (q, r + 1), (q - 1, r + 1), 
-                (q - 1, r), (q, r - 1), (q + 1, r - 1)
-            ];
-            
+            // Connectivity Logic
+            let neighbors = [(q+1, r), (q, r+1), (q-1, r+1), (q-1, r), (q, r-1), (q+1, r-1)];
             let mut mask = 0u8;
             for (i, (nq, nr)) in neighbors.iter().enumerate() {
                 if let Some(nt) = grid.tile_types.get(&(*nq, *nr)) {
-                    // What does this tile connect to?
                     let connects = if is_river {
-                        // Rivers connect to other Rivers, Water, or the Dock
                         matches!(*nt, TileType::River | TileType::Water | TileType::WaterRock | TileType::Dock)
                     } else {
-                        // Paths connect to Paths and all Buildings
-                        matches!(*nt, TileType::Path | TileType::Castle | TileType::House | 
-                                      TileType::Mill | TileType::Lumber | TileType::Sheep | 
-                                      TileType::WatchTower | TileType::Dock)
+                        matches!(*nt, TileType::Path | TileType::Castle | TileType::House | TileType::Mill | TileType::Dock)
                     };
-
-                    if connects {
-                        mask |= 1 << i;
-                    }
+                    if connects { mask |= 1 << i; }
                 }
             }
 
-            // Get the specific mesh (corner, straight, intersection) based on mask
-            let (model, rot_steps) = get_intersection_model(mask);
-            glb_path = format!("GLB format/{}-{}.glb", prefix, model);
-            
-            // Convert hexagonal steps (60 degrees) to radians
+            let (model, rot_steps) = get_connection_model(mask);
+            glb_path = format!("{}-{}.glb", prefix, model);
             rotation_y = -(rot_steps as f32) * PI / 3.0;
 
             if is_river {
-                y_offset = -0.2; // Rivers sit lower
-                collider = None; // Fall into water
+                y_offset = -0.1; 
             } else {
-                y_offset = 0.02; // Paths sit *just* above the grass base
-                spawn_grass_base = true; // Paths need grass underneath
-            }
-        },
-        TileType::Water => {
-            glb_path = "GLB format/water.glb".into();
-            y_offset = -0.2;
-            collider = None;
-        },
-        TileType::WaterRock => {
-            glb_path = "GLB format/water-rocks.glb".into();
-            y_offset = -0.2;
-        },
-        TileType::Sand => {
-            glb_path = "GLB format/sand.glb".into();
-            // Optional: Random rotation for variety
-            rotation_y = rand::random::<f32>() * PI * 2.0; 
-        },
-        TileType::Grass => {
-            glb_path = "GLB format/grass.glb".into();
-            can_spawn_props = true;
-        },
-        TileType::Forest => {
-            // Randomize forest density visuals
-            if rand::random::<f32>() > 0.5 {
-                glb_path = "GLB format/grass-forest.glb".into();
-            } else {
-                glb_path = "GLB format/unit-tree.glb".into(); // Single large tree
                 spawn_grass_base = true;
+                y_offset = 0.05;
             }
         },
-        TileType::Hill => {
-            glb_path = "GLB format/grass-hill.glb".into();
+        TileType::Water => { glb_path = "water.glb".into(); y_offset = -0.2; },
+        TileType::WaterRock => { glb_path = "water-rocks.glb".into(); y_offset = -0.2; },
+        TileType::Sand => { 
+            glb_path = if rng.gen_bool(0.2) { "sand-rocks.glb".into() } else { "sand.glb".into() };
         },
-        TileType::Mountain => {
-            glb_path = "GLB format/stone-mountain.glb".into();
-            // Tall cone collider to block movement
-            collider = Some(Collider::cone(4.0, settings.hex_size));
+        TileType::Grass => { glb_path = "grass.glb".into(); },
+        TileType::Forest => { 
+            glb_path = "grass.glb".into(); 
+            prop_path = Some("unit-tree.glb"); 
         },
-        TileType::Castle => {
-            glb_path = "GLB format/building-castle.glb".into();
-            spawn_grass_base = true;
-            collider = Some(Collider::cuboid(3.0, 3.0, 3.0));
+        TileType::Hill => { 
+            glb_path = if rng.gen_bool(0.5) { "grass-hill.glb".into() } else { "stone-hill.glb".into() }; 
         },
-        TileType::House => {
-            glb_path = "GLB format/building-house.glb".into();
-            spawn_grass_base = true;
-            rotation_y = -PI / 6.0; // Angled slightly
-        },
-        TileType::Mill => {
-            glb_path = "GLB format/building-mill.glb".into();
-            spawn_grass_base = true;
-        },
-        TileType::Lumber => {
-            glb_path = "GLB format/dirt-lumber.glb".into();
-        },
-        TileType::Sheep => {
-            glb_path = "GLB format/building-sheep.glb".into();
-            spawn_grass_base = true;
-        },
-        TileType::WatchTower => {
-            glb_path = "GLB format/building-tower.glb".into();
-            spawn_grass_base = true;
-        },
-        TileType::Dock => {
-            glb_path = "GLB format/building-dock.glb".into();
-            // Docks need to rotate to face the water/path logic, 
-            // but for simplicity, we fix rotation or rely on manual placement logic.
-            // Here we just rotate it to look okay in the specific map spot.
-            rotation_y = PI; 
-            y_offset = 0.1;
-        },
+        TileType::Mountain => { glb_path = "stone-mountain.glb".into(); },
+        TileType::Castle => { building_path = Some("building-castle.glb"); spawn_grass_base = true; },
+        TileType::House => { building_path = Some("building-house.glb"); spawn_grass_base = true; },
+        TileType::Mill => { building_path = Some("building- mill.glb"); spawn_grass_base = true; },
+        TileType::WatchTower => { building_path = Some("building-tower.glb"); spawn_grass_base = true; },
+        TileType::Dock => { building_path = Some("building-dock.glb"); rotation_y = PI; },
+        TileType::Lumber => { glb_path = "dirt-lumber.glb".into(); },
+        TileType::Sheep => { building_path = Some("building-sheep.glb"); spawn_grass_base = true; },
+        _ => { glb_path = "grass.glb".into(); }
     }
 
     // 4. Create Parent Entity
@@ -340,80 +279,61 @@ fn spawn_hex(
     )).id();
 
     let scale_vec = Vec3::splat(settings.tile_scale);
+    let visual_down_step = -8.0; // Moves the Kenney "bottom" below the Y=0 plane
 
-    // 5. Spawn Base Layer (if needed)
-    // This prevents "void" gaps under buildings or paths
+    // 5. Layer: Grass Base (for buildings/paths)
     if spawn_grass_base {
-        let grass_scene = assets.load("GLB format/grass.glb#Scene0");
         commands.spawn((
-            SceneRoot(grass_scene),
-            Transform::from_translation(Vec3::ZERO).with_scale(scale_vec),
+            SceneRoot(assets.load("grass.glb#Scene0")),
+            Transform::from_xyz(0.0, visual_down_step, 0.0).with_scale(scale_vec),
         )).set_parent(parent_id);
     }
 
-    // 6. Spawn Main Model
-    let scene = assets.load(format!("{}#Scene0", glb_path));
+    // 6. Layer: Main Terrain / Connection
     commands.spawn((
-        SceneRoot(scene),
-        Transform::from_translation(Vec3::new(0.0, y_offset, 0.0))
+        SceneRoot(assets.load(format!("{}#Scene0", glb_path))),
+        Transform::from_xyz(0.0, visual_down_step + y_offset, 0.0)
             .with_rotation(Quat::from_rotation_y(rotation_y))
             .with_scale(scale_vec),
     )).set_parent(parent_id);
 
-    // 7. Spawn Physics Collider
-    if let Some(mut col) = collider {
-        // Scale the collider to match the massive world scale
-        // A height of 2.0 (total 4.0) ensures a thick enough "floor"
-        let collider_thickness = 2.0; 
-        
+    // 7. Layer: Buildings or Props
+    if let Some(b_path) = building_path {
+        commands.spawn((
+            SceneRoot(assets.load(format!("{}#Scene0", b_path))),
+            Transform::from_xyz(0.0, 0.1, 0.0).with_scale(scale_vec),
+        )).set_parent(parent_id);
+    } else if let Some(p_path) = prop_path {
+        // Randomly scatter nature props
+        for _ in 0..rng.gen_range(1..3) {
+            let p_pos = Vec3::new(rng.gen_range(-10.0..10.0), 0.0, rng.gen_range(-10.0..10.0));
+            commands.spawn((
+                SceneRoot(assets.load(format!("{}#Scene0", p_path))),
+                Transform::from_translation(p_pos)
+                    .with_rotation(Quat::from_rotation_y(rng.gen::<f32>() * PI))
+                    .with_scale(scale_vec * rng.gen_range(0.8..1.2)),
+            )).set_parent(parent_id);
+        }
+    }
+
+    // 8. Layer: Physics Collider (Scaled to world)
+    let is_walkable = !matches!(my_type, TileType::Water | TileType::River | TileType::Mountain);
+    if is_walkable {
+        let col_height = 4.0;
         commands.spawn((
             RigidBody::Fixed,
-            Collider::cylinder(collider_thickness, settings.hex_size * 0.95),
-            // Position the top of the collider at Y = 0
-            Transform::from_xyz(0.0, -collider_thickness, 0.0), 
+            Collider::cylinder(col_height, settings.hex_size * 0.95),
+            Transform::from_xyz(0.0, -col_height, 0.0), // Top of collider is at Y=0
+        )).set_parent(parent_id);
+    } else if my_type == TileType::Mountain {
+        commands.spawn((
+            RigidBody::Fixed,
+            Collider::cylinder(20.0, settings.hex_size * 0.8),
+            Transform::from_xyz(0.0, 10.0, 0.0),
         )).set_parent(parent_id);
     }
 
-    // 8. Prop System (Decoration)
-    // Randomly adds fences, trees, or rocks to empty Grass/Sand tiles
-    if can_spawn_props {
-        let mut rng = rand::thread_rng();
-        let chance: f32 = rng.r#gen();
-
-        // 10% Chance for a loose tree (creates smooth transition to forests)
-        if chance > 0.90 {
-            let tree_scene = assets.load("GLB format/unit-tree.glb#Scene0");
-            // Randomize tree scale/rotation slightly
-            let tree_scale = settings.tile_scale * (0.8 + rng.r#gen::<f32>() * 0.4); 
-            commands.spawn((
-                SceneRoot(tree_scene),
-                Transform::from_xyz(0.0, 0.0, 0.0)
-                    .with_scale(Vec3::splat(tree_scale))
-                    .with_rotation(Quat::from_rotation_y(rng.r#gen::<f32>() * PI * 2.0)),
-            )).set_parent(parent_id);
-        }
-        // 5% Chance for a small wall/fence
-        else if chance < 0.05 {
-            let wall_scene = assets.load("GLB format/building-wall.glb#Scene0");
-            commands.spawn((
-                SceneRoot(wall_scene),
-                Transform::from_xyz(0.0, 0.0, 0.0)
-                    .with_scale(scale_vec)
-                    .with_rotation(Quat::from_rotation_y(rng.r#gen::<f32>() * PI * 2.0)),
-            )).set_parent(parent_id);
-        }
-        // 2% Chance for a rock
-        else if chance > 0.40 && chance < 0.42 {
-            let rock_scene = assets.load("GLB format/stone.glb#Scene0");
-             commands.spawn((
-                SceneRoot(rock_scene),
-                Transform::from_xyz(rng.r#gen::<f32>(), 0.0, rng.r#gen::<f32>())
-                    .with_scale(scale_vec * 0.5),
-            )).set_parent(parent_id);
-        }
-    }
-
-    // 9. Register in Grid State
+    // 9. Register
     grid.spawned_tiles.insert((q, r), parent_id);
 }
 
@@ -524,38 +444,75 @@ fn world_tuner_system(
     }
 }
 
-/// Helper to map a 6-bit hex neighbor mask to a model name and rotation steps (0-5).
 fn get_intersection_model(mask: u8) -> (&'static str, u8) {
-    if mask == 0 { return ("straight", 0); } 
-    
+    let m6 = mask & 0b111111;
+    if m6 == 0 { return ("straight", 0); }
+
+    // Define base patterns for Kenney GLBs oriented East-West
+    // 0:E, 1:SE, 2:SW, 3:W, 4:NW, 5:NE
+    let patterns = [
+        ("end",          0b000001), // Connects only to East
+        ("straight",     0b001001), // East to West (180°)
+        ("corner",       0b000101), // East to SW (120° Wide Turn - Standard Kenney)
+        ("corner-sharp", 0b000011), // East to SE (60° Sharp Turn)
+        ("intersection", 0b001011), // T-junction style
+    ];
+
+    // Try to find a match by rotating the mask 6 times
     for r in 0..6 {
-        let m = rotate_mask(mask, r);
-        
-        if m == 0b000001 { return ("end", r); }
-        if m == 0b001000 { return ("end", (r+3)%6); }
-        if m == 0b001001 { return ("straight", r); }
-        if m == 0b000011 { return ("corner", r); } 
-        if m == 0b000101 { return ("corner-sharp", r); }
-        if m == 0b000111 { return ("intersectionA", r); } 
-        if m == 0b001011 { return ("intersectionB", r); } 
-        if m == 0b010011 { return ("intersectionC", r); } 
-        if m == 0b010101 { return ("intersectionD", r); } 
-        if m == 0b001111 { return ("intersectionE", r); }
-        if m == 0b010111 { return ("intersectionF", r); }
-        if m == 0b011011 { return ("intersectionG", r); }
-        if m == 0b011111 { return ("intersectionH", r); }
+        let rotated = rotate_mask_left(m6, r); 
+        for (name, pattern) in patterns.iter() {
+            if rotated == *pattern {
+                return (name, r);
+            }
+        }
     }
 
+    // Fallback for complex junctions
     ("crossing", 0)
 }
 
-fn rotate_mask(mask: u8, steps: u8) -> u8 {
+fn rotate_mask_left(mask: u8, steps: u8) -> u8 {
     let mut m = mask & 0b111111;
     for _ in 0..steps {
-        let low = m & 1;
-        m = (m >> 1) | (low << 5);
+        let high = (m >> 5) & 1;
+        m = ((m << 1) & 0b111111) | high;
     }
     m
+}
+
+fn get_connection_model(mask: u8) -> (&'static str, u8) {
+    let m6 = mask & 0b111111;
+    if m6 == 0 { return ("straight", 0); }
+
+    // Map patterns to your specific file list
+    // Pattern bits: 0:E, 1:SE, 2:SW, 3:W, 4:NW, 5:NE
+    let patterns = [
+        ("start",         0b000001), 
+        ("end",           0b000001), 
+        ("straight",      0b001001), 
+        ("corner",        0b000101), // Wide 120 deg
+        ("corner-sharp",  0b000011), // Sharp 60 deg
+        ("intersectionA", 0b000111), 
+        ("intersectionB", 0b001011), 
+        ("intersectionC", 0b010011), 
+        ("intersectionD", 0b010101), 
+        ("intersectionE", 0b001111),
+        ("intersectionF", 0b010111),
+        ("intersectionG", 0b011011),
+        ("intersectionH", 0b011111),
+        ("crossing",      0b111111),
+    ];
+
+    for r in 0..6 {
+        let rotated = rotate_mask_left(m6, r);
+        for (name, pattern) in patterns.iter() {
+            if rotated == *pattern {
+                return (name, r);
+            }
+        }
+    }
+    ("straight", 0)
 }
 
 
