@@ -310,7 +310,7 @@ fn spawn_hex(
             commands.spawn((
                 SceneRoot(assets.load(format!("{}#Scene0", p_path))),
                 Transform::from_translation(p_pos)
-                    .with_rotation(Quat::from_rotation_y(rng.gen::<f32>() * PI))
+                    .with_rotation(Quat::from_rotation_y(rng.r#gen::<f32>() * PI))
                     .with_scale(scale_vec * rng.gen_range(0.8..1.2)),
             )).set_parent(parent_id);
         }
