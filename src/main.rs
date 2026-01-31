@@ -766,6 +766,8 @@ struct WowCameraRig {
     pub max_dist: f32,
     pub zoom_sens: f32,
     pub rot_sens: f32,
+    // Input state tracking
+    pub is_user_controlling: bool,
 }
 
 impl Default for WowCameraRig {
@@ -776,6 +778,7 @@ impl Default for WowCameraRig {
             min_pitch: 0.1, max_pitch: PI / 2.1,
             min_dist: 5.0, max_dist: 150.0,
             zoom_sens: 5.0, rot_sens: 0.003,
+            is_user_controlling: false,
         }
     }
 }
@@ -1228,51 +1231,82 @@ fn wow_camera_system(
     let Ok(mut player_t) = q_player.get_single_mut() else { return };
     
     let dt = time.delta_secs();
+    const DEADZONE: f32 = 0.001;
+    const CONVERGENCE_THRESHOLD: f32 = 0.0001;
     
     let right_click = mouse_btn.pressed(MouseButton::Right);
     let left_click = mouse_btn.pressed(MouseButton::Left);
     
-    // Zoom
+    // Zoom - only process when events exist
+    let mut zoom_changed = false;
     for ev in mouse_wheel.read() {
-        rig.goal_radius = (rig.goal_radius - ev.y * rig.zoom_sens).clamp(rig.min_dist, rig.max_dist);
+        if ev.y.abs() > DEADZONE {
+            // Dynamic zoom speed based on current distance
+            let zoom_speed = rig.zoom_sens * (1.0 + rig.goal_radius / 50.0);
+            rig.goal_radius = (rig.goal_radius - ev.y * zoom_speed).clamp(rig.min_dist, rig.max_dist);
+            zoom_changed = true;
+        }
     }
 
     // Orbit / Steer Logic
+    let mut has_mouse_input = false;
     if right_click || left_click {
         window.cursor_options.grab_mode = CursorGrabMode::Locked;
         window.cursor_options.visible = false;
         
+        // Only read mouse motion when actually grabbed
         let delta = mouse_motion.read().fold(Vec2::ZERO, |acc, e| acc + e.delta);
         
-        rig.target_yaw -= delta.x * rig.rot_sens;
-        rig.target_pitch = (rig.target_pitch - delta.y * rig.rot_sens).clamp(rig.min_pitch, rig.max_pitch);
+        // Apply deadzone to prevent micro-movements
+        if delta.length() > DEADZONE {
+            has_mouse_input = true;
+            rig.target_yaw -= delta.x * rig.rot_sens;
+            rig.target_pitch = (rig.target_pitch - delta.y * rig.rot_sens).clamp(rig.min_pitch, rig.max_pitch);
 
-        // If Right Click, turn player immediately (Steer)
-        // If Left Click, only camera turns (Orbit/Look)
-        if right_click {
-             let target_player_rot = Quat::from_rotation_y(rig.target_yaw);
-             player_t.rotation = player_t.rotation.slerp(target_player_rot, dt * 15.0);
+            // If Right Click, turn player immediately (Steer)
+            if right_click {
+                let target_player_rot = Quat::from_rotation_y(rig.target_yaw);
+                player_t.rotation = player_t.rotation.slerp(target_player_rot, dt * 15.0);
+            }
         }
     } else {
         window.cursor_options.grab_mode = CursorGrabMode::None;
         window.cursor_options.visible = true;
+        // Clear any remaining mouse events when not grabbed
+        mouse_motion.clear();
+    }
+    
+    // Update input state
+    rig.is_user_controlling = has_mouse_input || zoom_changed;
+
+    // Smooth Camera Follow - only if there's a significant difference
+    let yaw_diff = rig.target_yaw - rig.yaw;
+    if yaw_diff.abs() > CONVERGENCE_THRESHOLD {
+        // Use exponential decay for more natural feel
+        let smooth_factor = (dt * CAM_SMOOTH_SPEED).min(1.0);
+        rig.yaw += yaw_diff * smooth_factor;
+    } else {
+        // Snap to target when close enough
+        rig.yaw = rig.target_yaw;
     }
 
-    // Wrap Angles
-    rig.target_yaw = (rig.target_yaw + PI) % (2.0 * PI) - PI;
-    rig.yaw = (rig.yaw + PI) % (2.0 * PI) - PI;
+    let pitch_diff = rig.target_pitch - rig.pitch;
+    if pitch_diff.abs() > CONVERGENCE_THRESHOLD {
+        let smooth_factor = (dt * CAM_SMOOTH_SPEED).min(1.0);
+        rig.pitch += pitch_diff * smooth_factor;
+    } else {
+        rig.pitch = rig.target_pitch;
+    }
 
-    // Smooth Camera Follow
-    let mut diff = rig.target_yaw - rig.yaw;
-    if diff > PI { diff -= 2.0 * PI; }
-    if diff < -PI { diff += 2.0 * PI; }
-    rig.yaw = rig.yaw + diff * (dt * CAM_SMOOTH_SPEED).min(1.0);
-
-    rig.pitch = rig.pitch.lerp(rig.target_pitch, dt * CAM_SMOOTH_SPEED);
-    rig.radius = rig.radius.lerp(rig.goal_radius, dt * 5.0);
+    let radius_diff = rig.goal_radius - rig.radius;
+    if radius_diff.abs() > CONVERGENCE_THRESHOLD {
+        rig.radius += radius_diff * (dt * 5.0).min(1.0);
+    } else {
+        rig.radius = rig.goal_radius;
+    }
 
     // Calc Position
-    let head = player_t.translation + Vec3::new(0.0, 4.5, 0.0); // Focus slightly higher
+    let head = player_t.translation + Vec3::new(0.0, 4.5, 0.0);
     let rot = Quat::from_rotation_y(rig.yaw) * Quat::from_rotation_x(-rig.pitch);
     let desired = head + rot * Vec3::new(0.0, 0.0, rig.radius);
 
