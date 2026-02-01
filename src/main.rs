@@ -1079,93 +1079,50 @@ fn setup_starting_village(
     mut commands: Commands, 
     mut meshes: ResMut<Assets<Mesh>>, 
     mut materials: ResMut<Assets<StandardMaterial>>,
-    assets: Res<GameAssets>,
 ) {
-    let village_center = Vec3::new(0.0, 0.0, 0.0);
-    
-    let wall_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.4, 0.35, 0.3),
-        base_color_texture: Some(assets.debug_tex.clone()),
-        ..default()
-    });
-    
-    let resource_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.2, 0.6, 0.8),
-        base_color_texture: Some(assets.debug_tex.clone()),
-        emissive: LinearRgba::new(0.2, 0.6, 0.8, 1.0),
-        ..default()
-    });
-    
-    // Create perimeter walls
-    let wall_radius = 30.0;
-    let wall_segments = 8;
-    for i in 0..wall_segments {
-        let angle = (i as f32 / wall_segments as f32) * PI * 2.0;
-        let x = village_center.x + angle.cos() * wall_radius;
-        let z = village_center.z + angle.sin() * wall_radius;
-        let wall_rotation = Quat::from_rotation_y(angle + PI / 2.0);
-        
+    let storage_mat = materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.8, 0.0), metallic: 0.8, ..default() });
+    let hut_mat = materials.add(StandardMaterial { base_color: Color::srgb(0.6, 0.4, 0.2), ..default() });
+    let barracks_mat = materials.add(StandardMaterial { base_color: Color::srgb(0.1, 0.2, 0.8), emissive: LinearRgba::new(0.0, 0.5, 2.0, 1.0), ..default() });
+    let drill_mat = materials.add(StandardMaterial { base_color: Color::srgb(0.2, 0.7, 0.9), emissive: LinearRgba::new(0.0, 1.0, 2.0, 1.0), ..default() });
+
+    // 1. Storage Bin (The Hub) - Scaled Up
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(12.0, 8.0, 12.0))),
+        MeshMaterial3d(storage_mat),
+        Transform::from_xyz(0.0, 4.0, 0.0),
+        StorageBin, Structure, Health { current: 2000.0, max: 2000.0 },
+        RigidBody::Fixed, Collider::cuboid(6.0, 4.0, 6.0),
+    ));
+
+    // 2. Builder Hut - Scaled Up
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(8.0, 8.0, 8.0))),
+        MeshMaterial3d(hut_mat),
+        Transform::from_xyz(-25.0, 4.0, -25.0),
+        BuilderHut { spawn_timer: Timer::from_seconds(5.0, TimerMode::Repeating), worker_count: 0, max_workers: 4 },
+        Structure, Health { current: 1000.0, max: 1000.0 },
+        RigidBody::Fixed, Collider::cuboid(4.0, 4.0, 4.0),
+    ));
+
+    // 3. Barracks - Scaled Up
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(15.0, 10.0, 15.0))),
+        MeshMaterial3d(barracks_mat),
+        Transform::from_xyz(25.0, 5.0, -25.0),
+        Barracks { timer: Timer::from_seconds(10.0, TimerMode::Repeating), spawn_drone_next: true },
+        Structure, Health { current: 1500.0, max: 1500.0 },
+        RigidBody::Fixed, Collider::cuboid(7.5, 5.0, 7.5),
+    ));
+
+    // 4. Starting Drills - Scaled Up
+    for pos in [Vec3::new(-30.0, 4.0, 20.0), Vec3::new(30.0, 4.0, 20.0)] {
         commands.spawn((
-            Mesh3d(meshes.add(Cuboid::new(8.0, 6.0, 1.0))),
-            MeshMaterial3d(wall_mat.clone()),
-            // Y=3.0 for height 6.0 puts the bottom exactly at Y=0.0
-            Transform::from_xyz(x, 3.0, z).with_rotation(wall_rotation),
-            Wall,
-            Structure,
-            Health { current: 500.0, max: 500.0 },
-            RigidBody::Fixed,
-            Collider::cuboid(4.0, 3.0, 0.5),
-        ));
-    }
-    
-    // Spawn 3 drills
-    let drill_positions = [
-        Vec3::new(-10.0, 0.0, -10.0),
-        Vec3::new(10.0, 0.0, -10.0),
-        Vec3::new(0.0, 0.0, 10.0),
-    ];
-    
-    for pos in drill_positions.iter() {
-        commands.spawn((
-            Mesh3d(meshes.add(Cylinder::new(1.5, 3.0))),
-            MeshMaterial3d(resource_mat.clone()),
-            // Y=1.5 for height 3.0 puts base exactly at Y=0.0
-            Transform::from_translation(village_center + *pos + Vec3::Y * 1.5),
-            Drill { 
-                timer: Timer::from_seconds(5.0, TimerMode::Repeating), 
-                storage: 0 
-            },
-            Structure,
-            Health { current: 200.0, max: 200.0 },
-            RigidBody::Fixed,
-            Collider::cylinder(1.5, 1.5),
-        )).with_children(|parent| {
-            parent.spawn(PointLight { 
-                color: Color::srgb(0.2, 0.8, 1.0), 
-                intensity: 500.0, 
-                range: 15.0, 
-                ..default() 
-            });
-        });
-    }
-    
-    // Spawn 2 storage bins
-    let storage_positions = [
-        Vec3::new(-5.0, 0.0, 0.0),
-        Vec3::new(5.0, 0.0, 0.0),
-    ];
-    
-    for pos in storage_positions.iter() {
-        commands.spawn((
-            Mesh3d(meshes.add(Cuboid::new(4.0, 3.0, 4.0))),
-            MeshMaterial3d(resource_mat.clone()),
-            // Y=1.5 for height 3.0 puts base exactly at Y=0.0
-            Transform::from_translation(village_center + *pos + Vec3::Y * 1.5),
-            StorageBin,
-            Structure,
-            Health { current: 300.0, max: 300.0 },
-            RigidBody::Fixed,
-            Collider::cuboid(2.0, 1.5, 2.0),
+            Mesh3d(meshes.add(Cylinder::new(4.0, 8.0))),
+            MeshMaterial3d(drill_mat.clone()),
+            Transform::from_translation(pos),
+            Drill { timer: Timer::from_seconds(4.0, TimerMode::Repeating), storage: 0 },
+            Structure, Health { current: 600.0, max: 600.0 },
+            RigidBody::Fixed, Collider::cylinder(4.0, 4.0),
         ));
     }
 }
