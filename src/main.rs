@@ -191,7 +191,6 @@ fn update_hex_map(
 }
 
 // --- MAIN SPAWN FUNCTION ---
-
 fn spawn_hex(
     commands: &mut Commands,
     q: i32,
@@ -200,7 +199,6 @@ fn spawn_hex(
     grid: &mut HexGridState,
     settings: &WorldSettings,
 ) {
-    // 1. Calculate World Position
     let x = settings.hex_size * f32::sqrt(3.0) * (q as f32 + r as f32 / 2.0);
     let z = settings.hex_size * 3.0 / 2.0 * r as f32;
     let pos = Vec3::new(x, 0.0, z);
@@ -208,22 +206,19 @@ fn spawn_hex(
     let my_type = *grid.tile_types.get(&(q, r)).unwrap_or(&TileType::Water);
     let mut rng = rand::thread_rng();
 
-    // 2. Setup Variables
+    // 1. Setup Variables
     let mut glb_path = "grass.glb".to_string();
     let mut rotation_y = 0.0;
-    let mut y_offset = 0.0;
+    let mut y_offset = 0.0; // Vertical offset for the terrain itself (e.g. river depth)
     let mut spawn_grass_base = false;
     let mut prop_path: Option<&str> = None;
     let mut building_path: Option<&str> = None;
 
-    // 3. Selection Logic
+    // 2. Selection Logic
     match my_type {
-        // Inside spawn_hex, replace the River/Path match arm:
         TileType::River | TileType::Path => {
             let is_river = my_type == TileType::River;
             let prefix = if is_river { "river" } else { "path" };
-
-            // Pointy-topped neighbor directions: 0:E, 1:SE, 2:SW, 3:W, 4:NW, 5:NE
             let neighbors = [(q+1, r), (q, r+1), (q-1, r+1), (q-1, r), (q, r-1), (q+1, r-1)];
             let mut mask = 0u8;
             for (i, (nq, nr)) in neighbors.iter().enumerate() {
@@ -236,36 +231,23 @@ fn spawn_hex(
                     if connects { mask |= 1 << i; }
                 }
             }
-
             let (model, rot_steps) = get_connection_model(mask);
             glb_path = format!("{}-{}.glb", prefix, model);
-            
-            // --- THE FIX ---
-            // 1. Convert rot_steps (0-5) to radians (negative for CW rotation)
-            // 2. Add an offset of 4.0 steps (240 degrees) because Kenney models 
-            // usually start at the NW face (index 4), and we want to align to index 0.
             rotation_y = -((rot_steps as f32 + 3.0) * PI / 3.0);
 
             if is_river {
-                y_offset = -0.15; 
+                y_offset = -2.0; // Sink the river surface slightly below the grass
             } else {
                 spawn_grass_base = true;
-                y_offset = 0.05;
+                y_offset = 0.5; // Lift paths slightly above grass to prevent flickering
             }
         },
-        TileType::Water => { glb_path = "water.glb".into(); y_offset = -0.2; },
-        TileType::WaterRock => { glb_path = "water-rocks.glb".into(); y_offset = -0.2; },
-        TileType::Sand => { 
-            glb_path = if rng.gen_bool(0.2) { "sand-rocks.glb".into() } else { "sand.glb".into() };
-        },
+        TileType::Water => { glb_path = "water.glb".into(); y_offset = -2.0; },
+        TileType::WaterRock => { glb_path = "water-rocks.glb".into(); y_offset = -2.0; },
+        TileType::Sand => { glb_path = if rng.gen_bool(0.2) { "sand-rocks.glb".into() } else { "sand.glb".into() }; },
         TileType::Grass => { glb_path = "grass.glb".into(); },
-        TileType::Forest => { 
-            glb_path = "grass.glb".into(); 
-            prop_path = Some("unit-tree.glb"); 
-        },
-        TileType::Hill => { 
-            glb_path = if rng.gen_bool(0.5) { "grass-hill.glb".into() } else { "stone-hill.glb".into() }; 
-        },
+        TileType::Forest => { glb_path = "grass.glb".into(); prop_path = Some("unit-tree.glb"); },
+        TileType::Hill => { glb_path = if rng.gen_bool(0.5) { "grass-hill.glb".into() } else { "stone-hill.glb".into() }; },
         TileType::Mountain => { glb_path = "stone-mountain.glb".into(); },
         TileType::Castle => { building_path = Some("building-castle.glb"); spawn_grass_base = true; },
         TileType::House => { building_path = Some("building-house.glb"); spawn_grass_base = true; },
@@ -277,7 +259,7 @@ fn spawn_hex(
         _ => { glb_path = "grass.glb".into(); }
     }
 
-    // 4. Create Parent Entity
+    // 3. Create Parent Entity (Root is at Y=0)
     let parent_id = commands.spawn((
         Transform::from_translation(pos),
         Visibility::default(),
@@ -285,9 +267,12 @@ fn spawn_hex(
     )).id();
 
     let scale_vec = Vec3::splat(settings.tile_scale);
-    let visual_down_step = -8.0; // Moves the Kenney "bottom" below the Y=0 plane
+    
+    // CRITICAL FIX: The visual_down_step must match the scale to bring the TOP to Y=0
+    // Most Kenney hexes are 1.0 units high. At scale 86, we move it down 86.
+    let visual_down_step = -settings.tile_scale; 
 
-    // 5. Layer: Grass Base (for buildings/paths)
+    // 4. Layer: Grass Base (optional background for structures)
     if spawn_grass_base {
         commands.spawn((
             SceneRoot(assets.load("grass.glb#Scene0")),
@@ -295,7 +280,7 @@ fn spawn_hex(
         )).set_parent(parent_id);
     }
 
-    // 6. Layer: Main Terrain / Connection
+    // 5. Layer: Main Terrain
     commands.spawn((
         SceneRoot(assets.load(format!("{}#Scene0", glb_path))),
         Transform::from_xyz(0.0, visual_down_step + y_offset, 0.0)
@@ -303,45 +288,41 @@ fn spawn_hex(
             .with_scale(scale_vec),
     )).set_parent(parent_id);
 
-    // 7. Layer: Buildings or Props
+    // 6. Layer: Buildings or Nature Props (Placed at Y=0, the new surface)
     if let Some(b_path) = building_path {
         commands.spawn((
             SceneRoot(assets.load(format!("{}#Scene0", b_path))),
-            Transform::from_xyz(0.0, 0.1, 0.0).with_scale(scale_vec),
+            Transform::from_xyz(0.0, 0.0, 0.0).with_scale(scale_vec),
         )).set_parent(parent_id);
     } else if let Some(p_path) = prop_path {
-        // Randomly scatter nature props
-        for _ in 0..rng.gen_range(1..3) {
-            let p_pos = Vec3::new(rng.gen_range(-10.0..10.0), 0.0, rng.gen_range(-10.0..10.0));
+        for _ in 0..rng.gen_range(1..4) {
+            let angle = rng.r#gen::<f32>() * PI * 2.0;
+            let dist = rng.gen_range(0.0..settings.hex_size * 0.5);
+            let p_pos = Vec3::new(angle.cos() * dist, 0.0, angle.sin() * dist);
             commands.spawn((
                 SceneRoot(assets.load(format!("{}#Scene0", p_path))),
                 Transform::from_translation(p_pos)
                     .with_rotation(Quat::from_rotation_y(rng.r#gen::<f32>() * PI))
-                    .with_scale(scale_vec * rng.gen_range(0.8..1.2)),
+                    .with_scale(scale_vec * rng.gen_range(0.7..1.1)),
             )).set_parent(parent_id);
         }
     }
 
-    // 8. Layer: Physics Collider (Scaled to world)
-    let is_walkable = !matches!(my_type, TileType::Water | TileType::River | TileType::Mountain);
+    // 7. Layer: Physics Collider (Positioned so the TOP is at Y=0)
+    let is_walkable = !matches!(my_type, TileType::Water | TileType::River);
     if is_walkable {
-        let col_height = 4.0;
+        let col_height = 10.0; // Thick enough to prevent tunneling
         commands.spawn((
             RigidBody::Fixed,
-            Collider::cylinder(col_height, settings.hex_size * 0.95),
-            Transform::from_xyz(0.0, -col_height, 0.0), // Top of collider is at Y=0
-        )).set_parent(parent_id);
-    } else if my_type == TileType::Mountain {
-        commands.spawn((
-            RigidBody::Fixed,
-            Collider::cylinder(20.0, settings.hex_size * 0.8),
-            Transform::from_xyz(0.0, 10.0, 0.0),
+            Collider::cylinder(col_height, settings.hex_size * 0.98),
+            // We want the TOP of the cylinder to be at Y=0
+            Transform::from_xyz(0.0, -col_height, 0.0), 
         )).set_parent(parent_id);
     }
 
-    // 9. Register
     grid.spawned_tiles.insert((q, r), parent_id);
 }
+
 
 fn apply_mesh_colliders(
     mut commands: Commands,
@@ -793,11 +774,13 @@ struct WowCameraRig {
 impl Default for WowCameraRig {
     fn default() -> Self {
         Self {
-            yaw: 0.0, pitch: PI / 6.0, radius: 150.0, goal_radius: 20.0,
+            yaw: 0.0, pitch: PI / 6.0,
             target_yaw: 0.0, target_pitch: PI / 6.0,
             min_pitch: 0.1, max_pitch: PI / 2.1,
             min_dist: 5.0, max_dist: 150.0,
             zoom_sens: 5.0, rot_sens: 0.003,
+            radius: 250.0,      
+            goal_radius: 100.0, 
             is_user_controlling: false,
         }
     }
@@ -1545,7 +1528,7 @@ fn worker_spawner(
                 commands.spawn((
                     Mesh3d(worker_mesh.clone()),
                     MeshMaterial3d(worker_mat.clone()),
-                    Transform::from_translation(t.translation() + Vec3::new(1.0, 150.0, 0.0)),
+                    Transform::from_translation(t.translation() + Vec3::new(1.0, 50.0, 0.0)),
                     Worker { carrying: false, target_drill: None, target_storage: None },
                     Health { current: 20.0, max: 20.0 },
                     RigidBody::Dynamic, Collider::capsule_y(0.25, 0.25), LockedAxes::ROTATION_LOCKED,
@@ -2371,9 +2354,10 @@ fn steering_system(
     for (e1, mut v, steer, t1) in q_steer.iter_mut() {
         let mut steer_acc = Vec3::ZERO;
         
+        // Inside steering_system, when calculating 'desired' velocity:
         if let Some(target) = steer.target {
-            // Flatten the target to the unit's current height to prevent "diving"
-            let flat_target = Vec3::new(target.x, t1.translation.y, target.z);
+            // FORCE TARGET TO SURFACE LEVEL (Y=0)
+            let flat_target = Vec3::new(target.x, 0.0, target.z); 
             let desired = (flat_target - t1.translation).normalize_or_zero() * steer.speed;
             steer_acc += (desired - v.linvel) * 2.0;
         } else {
