@@ -26,15 +26,16 @@ struct WorldSettings {
     pub island_size: f32,
 }
 
+// --- NEW r#genERATION LOGIC ---
+// This attempts to recreate the composition of the image (Island with a river partition)
+
 impl Default for WorldSettings {
     fn default() -> Self {
         Self {
-            // Doubled world scale for larger gameplay area
-            // hex_size and tile_scale increased 2x
             hex_size: 50.0, 
             tile_scale: 86.0, 
-            render_distance: 16,
-            island_size: 12.0, 
+            render_distance: 35, // Increased to see the larger horizon
+            island_size: 25.0,    // Doubled landmass radius (~1,800 tiles)
         }
     }
 }
@@ -51,87 +52,85 @@ struct HexTile;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum TileType {
-    Water,
-    WaterRock,
-    Sand,
-    Grass,
-    Forest,
-    Hill,
-    Mountain,
-    River,
-    Path,
-    Castle,
-    House,
-    Mill,
-    Lumber,
-    Sheep,
-    WatchTower,
-    Dock,
+    Water, WaterRock, DeepWater,
+    Sand, SandRocks,
+    Grass, Forest, ForestDense,
+    Hill, Mountain, Mine,
+    River, Path, Bridge,
+    // Civil Buildings
+    Castle, House, Mansion, Tower,
+    Market, Archery, Smelter, Mill, WaterMill,
+    Dock, Ship,
+    Lumber, Sheep, WatchTower,
 }
 
-// --- NEW r#genERATION LOGIC ---
-// This attempts to recreate the composition of the image (Island with a river partition)
 
 fn get_tile_type(q: i32, r: i32, seed: f32, island_size: f32) -> TileType {
-    // 1. COORDINATE UTILS
     let dist = (q.abs() + (q + r).abs() + r.abs()) as f32 / 2.0;
     
-    // Noise for slight organic variation
-    let noise = ((q as f32 * 0.5 + seed).sin() * (r as f32 * 0.5 + seed).cos()) * 2.0;
-    
-    // 2. THE RIVER (A winding cut through the island)
-    // Hardcoded shaped flow: starts at (0, -4), flows down to (2, 4)
-    let is_river = 
-        (q == 0 && r >= -4 && r <= -1) || // Top vertical segment
-        (q == 1 && r == -1) ||            // Bend
-        (q == 1 && r >= -1 && r <= 2) ||  // Mid segment
-        (q == 2 && r == 2) ||             // Bend
-        (q == 2 && r >= 3 && r <= 5);     // Mouth
+    // Smooth clusters for biomes
+    let n_biome = (q as f32 * 0.1 + seed).sin() + (r as f32 * 0.1 + seed).cos();
+    let n_detail = ((q as f32 * 0.8 + seed).cos() * (r as f32 * 0.8 + seed).sin()) * 0.2;
+    let noise = n_biome + n_detail;
 
+    // 1. INFRASTRUCTURE (River & Path)
+    let river_x = (r as f32 * 0.15).sin() * 7.0; 
+    let is_river = (q as f32 - river_x).abs() < 0.7;
+    // Paths create a cross-network connecting to the center
+    let is_path = (q == 0 || r == 0 || (q + r == 0)) && dist < island_size;
+
+    if is_river && is_path { return TileType::Bridge; }
     if is_river { return TileType::River; }
-
-    // 3. THE PATH (Connects Dock -> House -> Castle)
-    let is_path = 
-        (q == -2 && r == 0) || (q == -1 && r == 0) || // Horizontal lead up
-        (q == -3 && r == 1) || (q == -3 && r == 2);   // Path to dock
-
     if is_path { return TileType::Path; }
 
-    // 4. SPECIFIC POIs (Points of Interest from the image)
-    if q == 0 && r == -5 { return TileType::Mountain; } // Source of river
-    if q == 0 && r == -1 { return TileType::Castle; }   // Center Castle
-    if q == 2 && r == 1  { return TileType::Mill; }     // Mill by the river
-    if q == -3 && r == 3 { return TileType::Dock; }     // Dock at bottom left
-    if q == -2 && r == 1 { return TileType::House; }    // Village
-    if q == 1 && r == -3 { return TileType::WatchTower; } // Guard tower
-
-    // 5. BIOME LAYERS
-    // Water
-    if dist > island_size - 1.0 + (noise * 0.2) {
-        if noise > 0.8 { return TileType::WaterRock; }
+    // 2. WATER & COAST
+    if dist > island_size {
+        if dist > island_size + 4.0 { return TileType::DeepWater; }
+        if n_detail > 0.15 { return TileType::Ship; }
+        if n_detail < -0.15 { return TileType::WaterRock; }
         return TileType::Water;
     }
-    
-    // Beach/Sand (Coastline)
-    if dist > island_size - 2.5 + (noise * 0.2) {
+    if dist > island_size - 1.5 {
+        if is_path { return TileType::Dock; }
         return TileType::Sand;
     }
 
-    // Mountains/Hills (Cluster near top/center)
-    let mountain_bias = if r < -2 { 1.5 } else { 0.0 };
-    if noise + mountain_bias > 1.8 { return TileType::Mountain; }
-    if noise + mountain_bias > 1.2 { return TileType::Hill; }
+    // 3. DISTRICTS
+    // CAPITAL DISTRICT (Center)
+    if dist < 4.5 {
+        let roll = (q * 13 + r * 7).abs() % 10;
+        return match roll {
+            0 => TileType::Castle,
+            1 => TileType::Mansion,
+            2 => TileType::Market,
+            3 => TileType::Archery,
+            _ => TileType::House,
+        };
+    }
 
-    // Forests (Clumps of trees)
-    if noise < -0.5 { return TileType::Forest; }
-    
-    // Flavor Tiles (Sheep/Lumber)
-    let detail_rng = ((q * 13 + r * 37) as f32).sin();
-    if detail_rng > 0.85 { return TileType::Sheep; }
-    if detail_rng < -0.85 { return TileType::Lumber; }
+    // INDUSTRIAL PEAKS (Mountains/Mines)
+    if noise > 1.2 {
+        let roll = (q + r).abs() % 4;
+        return match roll {
+            0 => TileType::Mine,
+            1 => TileType::Smelter,
+            _ => TileType::Mountain,
+        };
+    }
 
-    // Default
-    TileType::Grass
+    // RURAL / AGRICULTURE
+    if noise < -0.8 {
+        if n_detail > 0.1 { return TileType::Lumber; }
+        return TileType::ForestDense;
+    }
+
+    let agri_roll = (q.abs() * 7 + r.abs() * 3) % 40;
+    match agri_roll {
+        0 => TileType::Mill,
+        1 => TileType::Sheep,
+        2 => TileType::WatchTower,
+        _ => if noise < -0.4 { TileType::Forest } else { TileType::Grass }
+    }
 }
 
 // --- SYSTEMS ---
@@ -190,6 +189,33 @@ fn update_hex_map(
     }
 }
 
+fn calculate_neighbor_mask(q: i32, r: i32, tile_map: &HashMap<(i32, i32), TileType>, my_type: TileType) -> u8 {
+    let neighbors = [(q+1, r), (q, r+1), (q-1, r+1), (q-1, r), (q, r-1), (q+1, r-1)];
+    let mut mask = 0u8;
+    for (i, coord) in neighbors.iter().enumerate() {
+        if let Some(&nt) = tile_map.get(coord) {
+            match my_type {
+                TileType::River => {
+                    // Rivers connect to other rivers, water, bridges, or docks
+                    if matches!(nt, TileType::River | TileType::Bridge | TileType::Water | TileType::WaterRock | TileType::Dock | TileType::WaterMill) {
+                        mask |= 1 << i;
+                    }
+                },
+                TileType::Path => {
+                    // Paths connect to paths, bridges, and all civic buildings
+                    if matches!(nt, TileType::Path | TileType::Bridge | TileType::Castle | TileType::House | TileType::Market | TileType::Archery | TileType::Mansion | TileType::Dock | TileType::WatchTower) {
+                        mask |= 1 << i;
+                    }
+                },
+                _ => {}
+            }
+        }
+    }
+    mask
+}
+
+// --- ENHANCED SPAWNING ENGINE ---
+
 fn spawn_hex(
     commands: &mut Commands,
     q: i32,
@@ -205,55 +231,60 @@ fn spawn_hex(
     let my_type = *grid.tile_types.get(&(q, r)).unwrap_or(&TileType::Water);
     let mut rng = rand::thread_rng();
 
-    let mut glb_path = "grass.glb".to_string();
-    let mut rotation_y = 0.0;
-    let mut y_offset = 0.0; 
-    let mut spawn_grass_base = false;
-    let mut prop_path: Option<&str> = None;
-    let mut building_path: Option<&str> = None;
+    // surface_y hides the bottom half of the hexes for a clean grid look
+    let surface_y = -(settings.tile_scale * 0.18); 
+    let scale_vec = Vec3::splat(settings.tile_scale);
 
+    let mut base_glb = "grass.glb";
+    let mut feature_glb: Option<String> = None;
+    let mut rotation_y = 0.0;
+    let mut y_offset = 0.0;
+
+    // --- LAYER 1: THE GRID BASE ---
+    match my_type {
+        TileType::DeepWater | TileType::Water | TileType::WaterRock | TileType::Ship | TileType::Bridge => {
+            base_glb = "water.glb";
+            y_offset = -2.5; // Water surface is lower
+        }
+        TileType::Sand | TileType::Dock => base_glb = "sand.glb",
+        TileType::Mountain | TileType::Mine | TileType::Smelter => base_glb = "stone.glb",
+        TileType::Lumber => base_glb = "dirt.glb",
+        _ => base_glb = "grass.glb",
+    }
+
+    // --- LAYER 2: THE FEATURES ---
     match my_type {
         TileType::River | TileType::Path => {
             let is_river = my_type == TileType::River;
-            let prefix = if is_river { "river" } else { "path" };
-            let neighbors = [(q+1, r), (q, r+1), (q-1, r+1), (q-1, r), (q, r-1), (q+1, r-1)];
-            let mut mask = 0u8;
-            for (i, (nq, nr)) in neighbors.iter().enumerate() {
-                if let Some(nt) = grid.tile_types.get(&(*nq, *nr)) {
-                    let connects = if is_river {
-                        matches!(*nt, TileType::River | TileType::Water | TileType::WaterRock | TileType::Dock)
-                    } else {
-                        matches!(*nt, TileType::Path | TileType::Castle | TileType::House | TileType::Mill | TileType::Dock)
-                    };
-                    if connects { mask |= 1 << i; }
-                }
-            }
+            let mask = calculate_neighbor_mask(q, r, &grid.tile_types, my_type);
             let (model, rot_steps) = get_connection_model(mask);
-            glb_path = format!("{}-{}.glb", prefix, model);
+            feature_glb = Some(format!("{}-{}.glb", if is_river { "river" } else { "path" }, model));
             rotation_y = -((rot_steps as f32 + 3.0) * PI / 3.0);
-
-            if is_river {
-                y_offset = -2.5; // Sink river surface
-            } else {
-                spawn_grass_base = true;
-                y_offset = 0.05; // Paths stay just hair above grass to prevent flickering
-            }
-        },
-        TileType::Water => { glb_path = "water.glb".into(); y_offset = -2.5; },
-        TileType::WaterRock => { glb_path = "water-rocks.glb".into(); y_offset = -2.5; },
-        TileType::Sand => { glb_path = if rng.gen_bool(0.2) { "sand-rocks.glb".into() } else { "sand.glb".into() }; },
-        TileType::Grass => { glb_path = "grass.glb".into(); },
-        TileType::Forest => { glb_path = "grass.glb".into(); prop_path = Some("unit-tree.glb"); },
-        TileType::Hill => { glb_path = if rng.gen_bool(0.5) { "grass-hill.glb".into() } else { "stone-hill.glb".into() }; },
-        TileType::Mountain => { glb_path = "stone-mountain.glb".into(); },
-        TileType::Castle => { building_path = Some("building-castle.glb"); spawn_grass_base = true; },
-        TileType::House => { building_path = Some("building-house.glb"); spawn_grass_base = true; },
-        TileType::Mill => { building_path = Some("building-mill.glb"); spawn_grass_base = true; },
-        TileType::WatchTower => { building_path = Some("building-tower.glb"); spawn_grass_base = true; },
-        TileType::Dock => { building_path = Some("building-dock.glb"); rotation_y = PI; },
-        TileType::Lumber => { glb_path = "dirt-lumber.glb".into(); },
-        TileType::Sheep => { building_path = Some("building-sheep.glb"); spawn_grass_base = true; },
-        _ => { glb_path = "grass.glb".into(); }
+            y_offset += if is_river { -0.1 } else { 0.05 }; 
+        }
+        TileType::Bridge => {
+            feature_glb = Some("bridge.glb".into());
+            let mask = calculate_neighbor_mask(q, r, &grid.tile_types, TileType::River);
+            let (_, rot_steps) = get_connection_model(mask);
+            rotation_y = -((rot_steps as f32 + 3.0) * PI / 3.0);
+        }
+        TileType::Castle => feature_glb = Some("building-castle.glb".into()),
+        TileType::House => feature_glb = Some("building-house.glb".into()),
+        TileType::Mansion => feature_glb = Some("unit-mansion.glb".into()),
+        TileType::Market => feature_glb = Some("building-market.glb".into()),
+        TileType::Archery => feature_glb = Some("building-archery.glb".into()),
+        TileType::Mine => feature_glb = Some("building-mine.glb".into()),
+        TileType::Smelter => feature_glb = Some("building-smelter.glb".into()),
+        TileType::Mill => feature_glb = Some("building-mill.glb".into()),
+        TileType::Sheep => feature_glb = Some("building-sheep.glb".into()),
+        TileType::Dock => { feature_glb = Some("building-dock.glb".into()); rotation_y = PI; },
+        TileType::WatchTower => feature_glb = Some("building-tower.glb".into()),
+        TileType::ForestDense => feature_glb = Some("grass-forest.glb".into()),
+        TileType::Mountain => feature_glb = Some("stone-mountain.glb".into()),
+        TileType::Hill => feature_glb = Some("grass-hill.glb".into()),
+        TileType::Ship => feature_glb = Some("unit-ship-large.glb".into()),
+        TileType::Forest => feature_glb = Some("unit-tree.glb".into()), // Spawn 1 tree centrally
+        _ => {}
     }
 
     let parent_id = commands.spawn((
@@ -262,62 +293,46 @@ fn spawn_hex(
         HexTile,
     )).id();
 
-    let scale_vec = Vec3::splat(settings.tile_scale);
-    
-    // TUNED OFFSET: 0.18 brings the visual surface exactly to Y=0 at standard Kenney proportions
-    let visual_down_step = -(settings.tile_scale * 0.18); 
-
-    // 4. Layer: Grass Base
-    if spawn_grass_base {
-        commands.spawn((
-            SceneRoot(assets.load("grass.glb#Scene0")),
-            Transform::from_xyz(0.0, visual_down_step, 0.0).with_scale(scale_vec),
-        )).set_parent(parent_id);
-    }
-
-    // 5. Layer: Main Terrain
+    // Spawn Base Ground (The Grid)
     commands.spawn((
-        SceneRoot(assets.load(format!("{}#Scene0", glb_path))),
-        Transform::from_xyz(0.0, visual_down_step + y_offset, 0.0)
-            .with_rotation(Quat::from_rotation_y(rotation_y))
+        SceneRoot(assets.load(format!("{}#Scene0", base_glb))),
+        Transform::from_xyz(0.0, surface_y + (if base_glb == "water.glb" { -2.5 } else { 0.0 }), 0.0)
             .with_scale(scale_vec),
     )).set_parent(parent_id);
 
-    // 6. Layer: Buildings or Nature Props
-    if let Some(b_path) = building_path {
+    // Spawn Feature (The Detail)
+    if let Some(glb) = feature_glb {
         commands.spawn((
-            SceneRoot(assets.load(format!("{}#Scene0", b_path))),
-            // SIT ON SURFACE: Y=0.0
-            Transform::from_xyz(0.0, 0.0, 0.0).with_scale(scale_vec),
-        )).set_parent(parent_id);
-    } else if let Some(p_path) = prop_path {
-        for _ in 0..rng.gen_range(1..4) {
-            let angle = rng.r#gen::<f32>() * PI * 2.0;
-            let dist = rng.gen_range(0.0..settings.hex_size * 0.5);
-            // SIT ON SURFACE: Y=0.0
-            let p_pos = Vec3::new(angle.cos() * dist, 0.0, angle.sin() * dist);
-            commands.spawn((
-                SceneRoot(assets.load(format!("{}#Scene0", p_path))),
-                Transform::from_translation(p_pos)
-                    .with_rotation(Quat::from_rotation_y(rng.r#gen::<f32>() * PI))
-                    .with_scale(scale_vec * rng.gen_range(0.6..0.9)),
-            )).set_parent(parent_id);
-        }
-    }
-
-    // 7. Layer: Physics Collider
-    let is_walkable = !matches!(my_type, TileType::Water | TileType::River);
-    if is_walkable {
-        let half_height = 5.0; 
-        commands.spawn((
-            RigidBody::Fixed,
-            Collider::cylinder(half_height, settings.hex_size * 0.95),
-            Transform::from_xyz(0.0, -half_height, 0.0), 
+            SceneRoot(assets.load(format!("{}#Scene0", glb))),
+            Transform::from_xyz(0.0, y_offset, 0.0)
+                .with_rotation(Quat::from_rotation_y(rotation_y))
+                .with_scale(scale_vec),
         )).set_parent(parent_id);
     }
 
     grid.spawned_tiles.insert((q, r), parent_id);
 }
+
+// Helper for complex multi-model tiles (like Mine on Mountain)
+fn spawn_sub_layer(cmds: &mut Commands, assets: &AssetServer, glb: &str, pos: Vec3, y: f32, rot: f32, scale: Vec3) {
+    cmds.spawn((
+        SceneRoot(assets.load(format!("{}#Scene0", glb))),
+        Transform::from_translation(pos + Vec3::Y * y)
+            .with_rotation(Quat::from_rotation_y(rot))
+            .with_scale(scale),
+    ));
+}
+
+// Helper to spawn the overlay assets (Rivers/Paths)
+fn spawn_custom_model(commands: &mut Commands, assets: &AssetServer, path: &str, world_pos: Vec3, y: f32, rot: f32, scale: f32) {
+    commands.spawn((
+        SceneRoot(assets.load(format!("{}#Scene0", path))),
+        Transform::from_translation(world_pos + Vec3::Y * y)
+            .with_rotation(Quat::from_rotation_y(rot))
+            .with_scale(Vec3::splat(scale)),
+    ));
+}
+
 fn apply_mesh_colliders(
     mut commands: Commands,
     q: Query<(Entity, &Mesh3d, &Parent), Added<Mesh3d>>,
@@ -768,13 +783,18 @@ struct WowCameraRig {
 impl Default for WowCameraRig {
     fn default() -> Self {
         Self {
-            yaw: 0.0, pitch: PI / 6.0,
-            target_yaw: 0.0, target_pitch: PI / 6.0,
-            min_pitch: 0.1, max_pitch: PI / 2.1,
-            min_dist: 5.0, max_dist: 150.0,
-            zoom_sens: 5.0, rot_sens: 0.003,
-            radius: 250.0,      
-            goal_radius: 100.0, 
+            yaw: 0.0, 
+            pitch: PI / 3.0,
+            target_yaw: 0.0, 
+            target_pitch: PI / 3.0,
+            min_pitch: 0.01,        // Allow looking almost perfectly flat down
+            max_pitch: PI / 2.1,
+            min_dist: 15.0, 
+            max_dist: 1500.0,      // Massive range for continent view
+            zoom_sens: 40.0,       // Faster zoom for high altitudes
+            rot_sens: 0.003,
+            radius: 800.0,         // Start high up
+            goal_radius: 800.0, 
             is_user_controlling: false,
         }
     }
@@ -2496,12 +2516,12 @@ fn phase_logic(
         pm.timer = Timer::from_seconds(if pm.is_combat { 45.0 } else { 60.0 }, TimerMode::Once);
         if !pm.is_combat { pm.wave += 1; }
         
-        let (l_col, a_col) = if pm.is_combat {
-            // COMBAT: Vibrant Red/Purple, high contrast
-            (Color::srgb(2.0, 0.5, 0.5), Color::srgb(0.2, 0.05, 0.1)) 
+        let (l_col, a_col) = if pm.is_combat {  
+            // COMBAT: Muted Red/Warning tone instead of glowing hot pink
+            (Color::srgb(1.2, 0.8, 0.8), Color::srgb(0.1, 0.02, 0.02)) 
         } else {
-            // BUILD: Cool Cyan/Blue
-            (Color::srgb(1.0, 1.0, 1.5), Color::srgb(0.1, 0.1, 0.2))
+            // BUILD: Clear Blue/Daylight
+            (Color::srgb(1.0, 1.0, 1.2), Color::srgb(0.05, 0.05, 0.1))
         };
 
         if let Ok(mut l) = lights.get_single_mut() { l.color = l_col; }
