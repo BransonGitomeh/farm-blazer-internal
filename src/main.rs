@@ -190,7 +190,6 @@ fn update_hex_map(
     }
 }
 
-// --- MAIN SPAWN FUNCTION ---
 fn spawn_hex(
     commands: &mut Commands,
     q: i32,
@@ -201,7 +200,7 @@ fn spawn_hex(
 ) {
     let x = settings.hex_size * f32::sqrt(3.0) * (q as f32 + r as f32 / 2.0);
     let z = settings.hex_size * 3.0 / 2.0 * r as f32;
-    let pos = Vec3::new(x, 0.0, z);
+    let pos = Vec3::new(x, 0.0, z); // The Parent Pivot is the Surface (Y=0)
 
     let my_type = *grid.tile_types.get(&(q, r)).unwrap_or(&TileType::Water);
     let mut rng = rand::thread_rng();
@@ -209,7 +208,7 @@ fn spawn_hex(
     // 1. Setup Variables
     let mut glb_path = "grass.glb".to_string();
     let mut rotation_y = 0.0;
-    let mut y_offset = 0.0; // Vertical offset for the terrain itself (e.g. river depth)
+    let mut y_offset = 0.0; 
     let mut spawn_grass_base = false;
     let mut prop_path: Option<&str> = None;
     let mut building_path: Option<&str> = None;
@@ -236,10 +235,10 @@ fn spawn_hex(
             rotation_y = -((rot_steps as f32 + 3.0) * PI / 3.0);
 
             if is_river {
-                y_offset = -2.0; // Sink the river surface slightly below the grass
+                y_offset = -2.0; // Sink the river 2 units below the grass surface
             } else {
                 spawn_grass_base = true;
-                y_offset = 0.5; // Lift paths slightly above grass to prevent flickering
+                y_offset = 0.1; // Lift paths slightly above grass to prevent Z-fighting
             }
         },
         TileType::Water => { glb_path = "water.glb".into(); y_offset = -2.0; },
@@ -268,11 +267,11 @@ fn spawn_hex(
 
     let scale_vec = Vec3::splat(settings.tile_scale);
     
-    // CRITICAL FIX: The visual_down_step must match the scale to bring the TOP to Y=0
-    // Most Kenney hexes are 1.0 units high. At scale 86, we move it down 86.
-    let visual_down_step = - (settings.tile_scale * 0.12); 
+    // THE CRITICAL FIX:
+    // Kenney hexes are 1.0 units high. Pushing it down by its scale brings the TOP to Y=0.
+    let visual_down_step = -settings.tile_scale; 
 
-    // 4. Layer: Grass Base (optional background for structures)
+    // 4. Layer: Grass Base
     if spawn_grass_base {
         commands.spawn((
             SceneRoot(assets.load("grass.glb#Scene0")),
@@ -308,15 +307,14 @@ fn spawn_hex(
         }
     }
 
-    // 7. Layer: Physics Collider (The "Floor")
+    // 7. Layer: Physics Collider (Positioned so the TOP is at Y=0)
     let is_walkable = !matches!(my_type, TileType::Water | TileType::River);
     if is_walkable {
-        let half_height = 5.0; // Total height of 10
+        let half_height = 5.0; // Total thickness of 10
         commands.spawn((
             RigidBody::Fixed,
-            // Rapier cylinder takes (half_height, radius)
             Collider::cylinder(half_height, settings.hex_size * 0.95),
-            // Position it so the TOP surface is exactly at Y = 0
+            // Positioned so the top is flush with the surface (Y=0)
             Transform::from_xyz(0.0, -half_height, 0.0), 
         )).set_parent(parent_id);
     }
@@ -1076,17 +1074,14 @@ fn setup_starting_village(
     mut materials: ResMut<Assets<StandardMaterial>>,
     assets: Res<GameAssets>,
 ) {
-    // Village center at origin
     let village_center = Vec3::new(0.0, 0.0, 0.0);
     
-    // Wall material
     let wall_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.4, 0.35, 0.3),
         base_color_texture: Some(assets.debug_tex.clone()),
         ..default()
     });
     
-    // Resource structure material
     let resource_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.2, 0.6, 0.8),
         base_color_texture: Some(assets.debug_tex.clone()),
@@ -1094,7 +1089,7 @@ fn setup_starting_village(
         ..default()
     });
     
-    // Create perimeter walls (octagonal layout)
+    // Create perimeter walls
     let wall_radius = 30.0;
     let wall_segments = 8;
     for i in 0..wall_segments {
@@ -1106,6 +1101,7 @@ fn setup_starting_village(
         commands.spawn((
             Mesh3d(meshes.add(Cuboid::new(8.0, 6.0, 1.0))),
             MeshMaterial3d(wall_mat.clone()),
+            // Y=3.0 puts the bottom of the 6.0 height wall at Y=0.0
             Transform::from_xyz(x, 3.0, z).with_rotation(wall_rotation),
             Wall,
             Structure,
@@ -1115,18 +1111,19 @@ fn setup_starting_village(
         ));
     }
     
-    // Spawn 3 drills inside the village
+    // Spawn 3 drills
     let drill_positions = [
-        Vec3::new(-10.0, 1.0, -10.0),
-        Vec3::new(10.0, 1.0, -10.0),
-        Vec3::new(0.0, 1.0, 10.0),
+        Vec3::new(-10.0, 0.0, -10.0),
+        Vec3::new(10.0, 0.0, -10.0),
+        Vec3::new(0.0, 0.0, 10.0),
     ];
     
     for pos in drill_positions.iter() {
         commands.spawn((
-            Mesh3d(meshes.add(Cylinder::new(2.0, 3.0))),
+            Mesh3d(meshes.add(Cylinder::new(1.5, 3.0))),
             MeshMaterial3d(resource_mat.clone()),
-            Transform::from_translation(village_center + *pos),
+            // Y=1.5 puts the bottom of the 3.0 height drill at Y=0.0
+            Transform::from_translation(village_center + *pos + Vec3::Y * 1.5),
             Drill { 
                 timer: Timer::from_seconds(5.0, TimerMode::Repeating), 
                 storage: 0 
@@ -1134,7 +1131,7 @@ fn setup_starting_village(
             Structure,
             Health { current: 200.0, max: 200.0 },
             RigidBody::Fixed,
-            Collider::cylinder(1.5, 2.0),
+            Collider::cylinder(1.5, 1.5),
         )).with_children(|parent| {
             parent.spawn(PointLight { 
                 color: Color::srgb(0.2, 0.8, 1.0), 
@@ -1147,15 +1144,16 @@ fn setup_starting_village(
     
     // Spawn 2 storage bins
     let storage_positions = [
-        Vec3::new(-5.0, 1.5, 0.0),
-        Vec3::new(5.0, 1.5, 0.0),
+        Vec3::new(-5.0, 0.0, 0.0),
+        Vec3::new(5.0, 0.0, 0.0),
     ];
     
     for pos in storage_positions.iter() {
         commands.spawn((
             Mesh3d(meshes.add(Cuboid::new(4.0, 3.0, 4.0))),
             MeshMaterial3d(resource_mat.clone()),
-            Transform::from_translation(village_center + *pos),
+            // Y=1.5 puts the bottom of the 3.0 height storage at Y=0.0
+            Transform::from_translation(village_center + *pos + Vec3::Y * 1.5),
             StorageBin,
             Structure,
             Health { current: 300.0, max: 300.0 },
