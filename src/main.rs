@@ -915,12 +915,20 @@ fn main() {
         .run();
 }
 
-fn bob_system(time: Res<Time>, mut q: Query<(&mut Transform, &Bob)>) {
+fn bob_system(time: Res<Time>, mut q: Query<(&mut Transform, &Bob), With<RigidBody>>) {
     let t = time.elapsed_secs();
     for (mut transform, bob) in q.iter_mut() {
-        // We only want to offset the VISUALS, not the physics body
-        // Note: For this to work perfectly, ensure Bob is only on the Child entity
-        transform.translation.y = (t * bob.speed + bob.offset).sin() * bob.amount;
+        // Instead of overriding Y, we only calculate the bobbing offset
+        // We use a "base_y" approach or handle it in a child entity.
+        // For now, let's ensure the offset doesn't push the capsule bottom through the floor.
+        let offset = (t * bob.speed + bob.offset).sin() * bob.amount;
+        
+        // Only bob UP from the center to prevent feet clipping
+        if offset < 0.0 {
+            transform.translation.y += offset.abs() * 0.1; // Dampen downward bob
+        } else {
+            transform.translation.y += offset;
+        }
     }
 }
 
@@ -1035,17 +1043,18 @@ fn sky_sphere_follow_system(
 
 
 fn setup_player(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, assets: Res<GameAssets>) {
+    let radius = 1.0;
+    let length = 2.5; // Total height = 4.5
     commands.spawn((
-        // 1. INCREASE MESH SIZE (Radius 1.0, Length 2.5)
-        Mesh3d(meshes.add(Capsule3d::new(1.0, 2.5))), 
+        Mesh3d(meshes.add(Capsule3d::new(radius, length))), 
         MeshMaterial3d(materials.add(StandardMaterial {
             base_color: Color::srgb(0.0, 0.8, 1.0),
             base_color_texture: Some(assets.debug_tex.clone()),
             emissive: LinearRgba::new(0.0, 0.8, 1.0, 2.0),
             ..default()
         })),
-        // 2. SPAWN HIGHER (20.0 instead of 10.0)
-        Transform::from_xyz(0.0, 5.0, 0.0), // Spawn hig
+        // Spawn slightly above ground (half-height + cushion)
+        Transform::from_xyz(0.0, 5.0, 0.0), 
         Player { 
             fire_timer: 0.0,
             jump_count: 0,
@@ -1055,9 +1064,12 @@ fn setup_player(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
         },
         AutoTarget::default(),
         Health { current: 500.0, max: 500.0 },
-        // 3. INCREASE COLLIDER SIZE (Half Height 1.25, Radius 1.0)
-        RigidBody::Dynamic, Collider::capsule_y(1.25, 1.0), LockedAxes::ROTATION_LOCKED,
-        Velocity::default(), Friction::coefficient(0.0), GravityScale(GRAVITY_SCALE),
+        RigidBody::Dynamic, 
+        Collider::capsule_y(length / 2.0, radius), 
+        LockedAxes::ROTATION_LOCKED,
+        Velocity::default(), 
+        Friction::coefficient(0.0), 
+        GravityScale(GRAVITY_SCALE),
     )).with_children(|parent| {
         parent.spawn(PointLight { color: Color::srgb(0.0, 1.0, 1.0), intensity: 1000.0, range: 25.0, ..default() });
     });
@@ -1511,8 +1523,10 @@ fn worker_spawner(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let worker_mesh = meshes.add(Capsule3d::new(0.25, 0.5));
-    let worker_mat = materials.add(StandardMaterial { base_color: Color::srgb(1.0, 200.0, 0.0), ..default() });
+    let radius = 0.7;
+    let length = 1.8; // Total height = 3.2 (Smaller than player)
+    let worker_mesh = meshes.add(Capsule3d::new(radius, length));
+    let worker_mat = materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.8, 0.0), ..default() });
     
     for (mut hut, t) in huts.iter_mut() {
         if hut.worker_count < hut.max_workers {
@@ -1522,10 +1536,13 @@ fn worker_spawner(
                 commands.spawn((
                     Mesh3d(worker_mesh.clone()),
                     MeshMaterial3d(worker_mat.clone()),
-                    Transform::from_translation(t.translation() + Vec3::new(1.0, 50.0, 0.0)),
+                    // Spawn at half-height above the hut's surface
+                    Transform::from_translation(t.translation() + Vec3::Y * 2.0),
                     Worker { carrying: false, target_drill: None, target_storage: None },
-                    Health { current: 20.0, max: 20.0 },
-                    RigidBody::Dynamic, Collider::capsule_y(0.25, 0.25), LockedAxes::ROTATION_LOCKED,
+                    Health { current: 50.0, max: 50.0 },
+                    RigidBody::Dynamic, 
+                    Collider::capsule_y(length / 2.0, radius), 
+                    LockedAxes::ROTATION_LOCKED,
                     Velocity::default(),
                     Steer { speed: WORKER_SPEED, ..default() },
                     Bob { speed: 5.0, amount: 0.15, base_y: 0.0, offset: rand::random::<f32>() * PI },
@@ -2251,17 +2268,8 @@ fn enemy_spawner(
 ) {
     if !phase.is_combat { return; }
     
-    // Limit max enemies to prevent RAM overflow
     const MAX_ENEMIES: usize = 80;
-    let current_enemy_count = enemies_q.iter().count();
-    
-    // If we're at max, remove oldest enemies
-    if current_enemy_count >= MAX_ENEMIES {
-        if let Some(oldest) = enemies_q.iter().next() {
-            commands.entity(oldest).despawn_recursive();
-        }
-        return;
-    }
+    if enemies_q.iter().count() >= MAX_ENEMIES { return; }
     
     let spawn_delay = (1.5 - (phase.wave as f32 * 0.05)).max(0.3);
     *timer += time.delta_secs();
@@ -2269,26 +2277,32 @@ fn enemy_spawner(
     if *timer > spawn_delay {
         *timer = 0.0;
         if let Ok(p_t) = player_q.get_single() {
-            let angle = rand::random::<f32>() * PI * 2.0;
-            // Spawn distance doubled for 2x world scale, and spawn high above ground (100 units)
-            let pos = p_t.translation + Vec3::new(angle.cos() * 160.0, 20.0, angle.sin() * 160.0);
-            
             let mut rng = rand::thread_rng();
-            let is_giant = rng.r#gen_bool(0.15); // 15% chance for giants
+            let angle = rng.r#gen::<f32>() * PI * 2.0;
+            let spawn_dist = 160.0;
+            let is_giant = rng.gen_bool(0.15);
+            
+            // Player-like dimensions
+            let radius = 1.0;
+            let length = 2.5; 
             
             let (hp, scale, color) = if is_giant {
-                (250.0 * 1.2f32.powi(phase.wave as i32), 3.0, Color::srgb(0.5, 0.0, 1.0))
+                (500.0 * 1.2f32.powi(phase.wave as i32), 2.5, Color::srgb(0.5, 0.0, 1.0))
             } else {
-                (50.0 * 1.15f32.powi(phase.wave as i32), 1.0, Color::srgb(1.0, 0.2, 0.2))
+                (100.0 * 1.15f32.powi(phase.wave as i32), 1.0, Color::srgb(1.0, 0.2, 0.2))
             };
+
+            let pos = p_t.translation + Vec3::new(angle.cos() * spawn_dist, 10.0, angle.sin() * spawn_dist);
             
             commands.spawn((
-                Mesh3d(meshes.add(Capsule3d::new(0.4, 1.0))),
+                Mesh3d(meshes.add(Capsule3d::new(radius, length))),
                 MeshMaterial3d(materials.add(StandardMaterial { base_color: color, ..default() })),
                 Transform::from_translation(pos).with_scale(Vec3::splat(scale)),
                 Enemy { is_giant },
                 Health { current: hp, max: hp },
-                RigidBody::Dynamic, Collider::capsule_y(0.5, 0.4), LockedAxes::ROTATION_LOCKED,
+                RigidBody::Dynamic, 
+                Collider::capsule_y(length / 2.0, radius), 
+                LockedAxes::ROTATION_LOCKED,
                 Velocity::default(),
                 Steer { speed: 15.0, ..default() },
                 Bob { speed: 3.0 + rng.r#gen::<f32>() * 2.0, amount: 0.2 * scale, base_y: 0.0, offset: rng.r#gen::<f32>() * PI },
