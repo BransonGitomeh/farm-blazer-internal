@@ -270,7 +270,7 @@ fn spawn_hex(
     
     // CRITICAL FIX: The visual_down_step must match the scale to bring the TOP to Y=0
     // Most Kenney hexes are 1.0 units high. At scale 86, we move it down 86.
-    let visual_down_step = -settings.tile_scale; 
+    let visual_down_step = - (settings.tile_scale * 0.12); 
 
     // 4. Layer: Grass Base (optional background for structures)
     if spawn_grass_base {
@@ -308,15 +308,16 @@ fn spawn_hex(
         }
     }
 
-    // 7. Layer: Physics Collider (Positioned so the TOP is at Y=0)
+    // 7. Layer: Physics Collider (The "Floor")
     let is_walkable = !matches!(my_type, TileType::Water | TileType::River);
     if is_walkable {
-        let col_height = 10.0; // Thick enough to prevent tunneling
+        let half_height = 5.0; // Total height of 10
         commands.spawn((
             RigidBody::Fixed,
-            Collider::cylinder(col_height, settings.hex_size * 0.98),
-            // We want the TOP of the cylinder to be at Y=0
-            Transform::from_xyz(0.0, -col_height, 0.0), 
+            // Rapier cylinder takes (half_height, radius)
+            Collider::cylinder(half_height, settings.hex_size * 0.95),
+            // Position it so the TOP surface is exactly at Y = 0
+            Transform::from_xyz(0.0, -half_height, 0.0), 
         )).set_parent(parent_id);
     }
 
@@ -1051,7 +1052,7 @@ fn setup_player(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
             ..default()
         })),
         // 2. SPAWN HIGHER (20.0 instead of 10.0)
-        Transform::from_xyz(0.0, 150.0, 0.0), // Spawn hig
+        Transform::from_xyz(0.0, 5.0, 0.0), // Spawn hig
         Player { 
             fire_timer: 0.0,
             jump_count: 0,
@@ -2058,8 +2059,15 @@ fn wow_movement_system(
     player.dash_timer = (player.dash_timer - dt).max(0.0);
 
     // Ground Check
-    let on_ground = if let Some((_, dist)) = rapier.cast_ray(transform.translation, Vec3::NEG_Y, 1.2, true, QueryFilter::exclude_dynamic()) {
-        dist < 1.1
+    let ray_origin = transform.translation + Vec3::Y * 0.5; // Start inside the player
+    let on_ground = if let Some((_, dist)) = rapier.cast_ray(
+        ray_origin, 
+        Vec3::NEG_Y, 
+        2.0, // Increased length to catch the ground
+        true, 
+        QueryFilter::exclude_dynamic()
+    ) {
+        dist < 0.7 // If the ground is within 0.5 units of our feet
     } else { false };
 
     if on_ground {
@@ -2152,6 +2160,7 @@ fn wow_movement_system(
         if on_ground && time.elapsed_secs() % 0.2 < 0.02 {
             spawn_dust(&mut commands, &mut meshes, &mut materials, transform.translation - Vec3::Y * 0.5, Color::srgba(0.5, 0.5, 0.5, 0.5));
         }
+        
     } else {
         velocity.linvel.x = velocity.linvel.x.lerp(0.0, dt * 10.0);
         velocity.linvel.z = velocity.linvel.z.lerp(0.0, dt * 10.0);
@@ -2269,7 +2278,7 @@ fn enemy_spawner(
         if let Ok(p_t) = player_q.get_single() {
             let angle = rand::random::<f32>() * PI * 2.0;
             // Spawn distance doubled for 2x world scale, and spawn high above ground (100 units)
-            let pos = p_t.translation + Vec3::new(angle.cos() * 160.0, 250.0, angle.sin() * 160.0);
+            let pos = p_t.translation + Vec3::new(angle.cos() * 160.0, 20.0, angle.sin() * 160.0);
             
             let mut rng = rand::thread_rng();
             let is_giant = rng.r#gen_bool(0.15); // 15% chance for giants
@@ -2354,15 +2363,22 @@ fn steering_system(
     for (e1, mut v, steer, t1) in q_steer.iter_mut() {
         let mut steer_acc = Vec3::ZERO;
         
-        // Inside steering_system, when calculating 'desired' velocity:
         if let Some(target) = steer.target {
-            // FORCE TARGET TO SURFACE LEVEL (Y=0)
-            let flat_target = Vec3::new(target.x, 0.0, target.z); 
-            let desired = (flat_target - t1.translation).normalize_or_zero() * steer.speed;
-            steer_acc += (desired - v.linvel) * 2.0;
-        } else {
-            // BRAKE
-            steer_acc -= v.linvel * 5.0;
+            // 1. PROJECT TARGET TO ENTITY'S CURRENT Y 
+            // This prevents the "pulling up" effect
+            let flat_target = Vec3::new(target.x, t1.translation.y, target.z); 
+            let dir = flat_target - t1.translation;
+            let dist = dir.length();
+
+            if dir.length() > 0.1 {
+                let desired = dir.normalize() * steer.speed;
+                let current_horiz = Vec3::new(v.linvel.x, 0.0, v.linvel.z);
+                let steer_force = (desired - current_horiz) * 5.0;
+
+                // Only apply force to X and Z, let gravity handle Y
+                v.linvel.x += steer_force.x * dt;
+                v.linvel.z += steer_force.z * dt;
+            }
         }
 
         // 2. SEPARATION
@@ -2382,14 +2398,14 @@ fn steering_system(
             let dist = t1.translation.distance(obs.translation());
             if dist < 6.0 && dist > 0.0 {
                 avoid_acc += (t1.translation - obs.translation()).normalize() / dist;
-            }
+             }
         }
         steer_acc += avoid_acc * 30.0;
 
         // Apply
-        let y_vel = v.linvel.y;
+        let current_y_vel = v.linvel.y; // Save gravity's work
         v.linvel += steer_acc * dt;
-        v.linvel.y = y_vel; 
+        v.linvel.y = current_y_vel; // Restore gravity's work  
         
         // Clamp horizontal
         let mut horiz = Vec3::new(v.linvel.x, 0.0, v.linvel.z);
@@ -2446,7 +2462,7 @@ fn projectile_logic(
         
         // Trail
         if time.elapsed_secs() % 0.05 < 0.02 {
-            spawn_dust(&mut commands, &mut meshes, &mut materials, pt.translation, Color::srgba(0.0, 1.0, 1.0, 0.3));
+            spawn_dust(&mut commands, &mut meshes, &mut materials, pt.translation, Color::srgba(0.0, 1.0, 1.0, 0.2));
         }
 
         for (ee, et, mut hp) in enemies.iter_mut() {
