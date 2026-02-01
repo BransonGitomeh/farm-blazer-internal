@@ -200,12 +200,11 @@ fn spawn_hex(
 ) {
     let x = settings.hex_size * f32::sqrt(3.0) * (q as f32 + r as f32 / 2.0);
     let z = settings.hex_size * 3.0 / 2.0 * r as f32;
-    let pos = Vec3::new(x, 0.0, z); // The Parent Pivot is the Surface (Y=0)
+    let pos = Vec3::new(x, 0.0, z); 
 
     let my_type = *grid.tile_types.get(&(q, r)).unwrap_or(&TileType::Water);
     let mut rng = rand::thread_rng();
 
-    // 1. Setup Variables
     let mut glb_path = "grass.glb".to_string();
     let mut rotation_y = 0.0;
     let mut y_offset = 0.0; 
@@ -213,7 +212,6 @@ fn spawn_hex(
     let mut prop_path: Option<&str> = None;
     let mut building_path: Option<&str> = None;
 
-    // 2. Selection Logic
     match my_type {
         TileType::River | TileType::Path => {
             let is_river = my_type == TileType::River;
@@ -235,14 +233,14 @@ fn spawn_hex(
             rotation_y = -((rot_steps as f32 + 3.0) * PI / 3.0);
 
             if is_river {
-                y_offset = -2.0; // Sink the river 2 units below the grass surface
+                y_offset = -2.5; // Sink river surface
             } else {
                 spawn_grass_base = true;
-                y_offset = 0.1; // Lift paths slightly above grass to prevent Z-fighting
+                y_offset = 0.05; // Paths stay just hair above grass to prevent flickering
             }
         },
-        TileType::Water => { glb_path = "water.glb".into(); y_offset = -2.0; },
-        TileType::WaterRock => { glb_path = "water-rocks.glb".into(); y_offset = -2.0; },
+        TileType::Water => { glb_path = "water.glb".into(); y_offset = -2.5; },
+        TileType::WaterRock => { glb_path = "water-rocks.glb".into(); y_offset = -2.5; },
         TileType::Sand => { glb_path = if rng.gen_bool(0.2) { "sand-rocks.glb".into() } else { "sand.glb".into() }; },
         TileType::Grass => { glb_path = "grass.glb".into(); },
         TileType::Forest => { glb_path = "grass.glb".into(); prop_path = Some("unit-tree.glb"); },
@@ -258,7 +256,6 @@ fn spawn_hex(
         _ => { glb_path = "grass.glb".into(); }
     }
 
-    // 3. Create Parent Entity (Root is at Y=0)
     let parent_id = commands.spawn((
         Transform::from_translation(pos),
         Visibility::default(),
@@ -267,9 +264,8 @@ fn spawn_hex(
 
     let scale_vec = Vec3::splat(settings.tile_scale);
     
-    // THE CRITICAL FIX:
-    // Kenney hexes are 1.0 units high. Pushing it down by its scale brings the TOP to Y=0.
-    let visual_down_step = -settings.tile_scale; 
+    // TUNED OFFSET: 0.18 brings the visual surface exactly to Y=0 at standard Kenney proportions
+    let visual_down_step = -(settings.tile_scale * 0.18); 
 
     // 4. Layer: Grass Base
     if spawn_grass_base {
@@ -287,42 +283,41 @@ fn spawn_hex(
             .with_scale(scale_vec),
     )).set_parent(parent_id);
 
-    // 6. Layer: Buildings or Nature Props (Placed at Y=0, the new surface)
+    // 6. Layer: Buildings or Nature Props
     if let Some(b_path) = building_path {
         commands.spawn((
             SceneRoot(assets.load(format!("{}#Scene0", b_path))),
+            // SIT ON SURFACE: Y=0.0
             Transform::from_xyz(0.0, 0.0, 0.0).with_scale(scale_vec),
         )).set_parent(parent_id);
     } else if let Some(p_path) = prop_path {
         for _ in 0..rng.gen_range(1..4) {
             let angle = rng.r#gen::<f32>() * PI * 2.0;
             let dist = rng.gen_range(0.0..settings.hex_size * 0.5);
+            // SIT ON SURFACE: Y=0.0
             let p_pos = Vec3::new(angle.cos() * dist, 0.0, angle.sin() * dist);
             commands.spawn((
                 SceneRoot(assets.load(format!("{}#Scene0", p_path))),
                 Transform::from_translation(p_pos)
                     .with_rotation(Quat::from_rotation_y(rng.r#gen::<f32>() * PI))
-                    .with_scale(scale_vec * rng.gen_range(0.7..1.1)),
+                    .with_scale(scale_vec * rng.gen_range(0.6..0.9)),
             )).set_parent(parent_id);
         }
     }
 
-    // 7. Layer: Physics Collider (Positioned so the TOP is at Y=0)
+    // 7. Layer: Physics Collider
     let is_walkable = !matches!(my_type, TileType::Water | TileType::River);
     if is_walkable {
-        let half_height = 5.0; // Total thickness of 10
+        let half_height = 5.0; 
         commands.spawn((
             RigidBody::Fixed,
             Collider::cylinder(half_height, settings.hex_size * 0.95),
-            // Positioned so the top is flush with the surface (Y=0)
             Transform::from_xyz(0.0, -half_height, 0.0), 
         )).set_parent(parent_id);
     }
 
     grid.spawned_tiles.insert((q, r), parent_id);
 }
-
-
 fn apply_mesh_colliders(
     mut commands: Commands,
     q: Query<(Entity, &Mesh3d, &Parent), Added<Mesh3d>>,
@@ -1101,7 +1096,7 @@ fn setup_starting_village(
         commands.spawn((
             Mesh3d(meshes.add(Cuboid::new(8.0, 6.0, 1.0))),
             MeshMaterial3d(wall_mat.clone()),
-            // Y=3.0 puts the bottom of the 6.0 height wall at Y=0.0
+            // Y=3.0 for height 6.0 puts the bottom exactly at Y=0.0
             Transform::from_xyz(x, 3.0, z).with_rotation(wall_rotation),
             Wall,
             Structure,
@@ -1122,7 +1117,7 @@ fn setup_starting_village(
         commands.spawn((
             Mesh3d(meshes.add(Cylinder::new(1.5, 3.0))),
             MeshMaterial3d(resource_mat.clone()),
-            // Y=1.5 puts the bottom of the 3.0 height drill at Y=0.0
+            // Y=1.5 for height 3.0 puts base exactly at Y=0.0
             Transform::from_translation(village_center + *pos + Vec3::Y * 1.5),
             Drill { 
                 timer: Timer::from_seconds(5.0, TimerMode::Repeating), 
@@ -1152,7 +1147,7 @@ fn setup_starting_village(
         commands.spawn((
             Mesh3d(meshes.add(Cuboid::new(4.0, 3.0, 4.0))),
             MeshMaterial3d(resource_mat.clone()),
-            // Y=1.5 puts the bottom of the 3.0 height storage at Y=0.0
+            // Y=1.5 for height 3.0 puts base exactly at Y=0.0
             Transform::from_translation(village_center + *pos + Vec3::Y * 1.5),
             StorageBin,
             Structure,
