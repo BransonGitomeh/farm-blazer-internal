@@ -64,75 +64,89 @@ enum TileType {
     Lumber, Sheep, WatchTower,
 }
 
-
 fn get_tile_type(q: i32, r: i32, seed: f32, island_size: f32) -> TileType {
     let dist = (q.abs() + (q + r).abs() + r.abs()) as f32 / 2.0;
     
-    // Smooth clusters for biomes
-    let n_biome = (q as f32 * 0.1 + seed).sin() + (r as f32 * 0.1 + seed).cos();
-    let n_detail = ((q as f32 * 0.8 + seed).cos() * (r as f32 * 0.8 + seed).sin()) * 0.2;
-    let noise = n_biome + n_detail;
+    // 1. THE RIVER (A continuous winding path from top to bottom)
+    // We define a center line for the river using a Sine wave
+    let river_q = (r as f32 * 0.15 + seed).sin() * 8.0;
+    let is_river = (q as f32 - river_q).abs() < 0.7;
 
-    // 1. INFRASTRUCTURE (River & Path)
-    let river_x = (r as f32 * 0.15).sin() * 7.0; 
-    let is_river = (q as f32 - river_x).abs() < 0.7;
-    // Paths create a cross-network connecting to the center
-    let is_path = (q == 0 || r == 0 || (q + r == 0)) && dist < island_size;
+    // 2. THE PATHS (Radial roads connecting the center to the cardinal directions)
+    // Guaranteed to connect at (0,0)
+    let is_main_path = (q == 0 || r == 0 || q + r == 0) && dist < island_size;
 
-    if is_river && is_path { return TileType::Bridge; }
-    if is_river { return TileType::River; }
-    if is_path { return TileType::Path; }
+    // 3. SPECIAL CROSSINGS
+    if is_river && is_main_path { return TileType::Bridge; }
+    if is_river { 
+        // 5% chance for a WaterMill if next to land
+        let mill_rng = (q * 13 + r * 7).abs() % 100;
+        if mill_rng < 5 && dist < island_size { return TileType::WaterMill; }
+        return TileType::River; 
+    }
+    if is_main_path { return TileType::Path; }
 
-    // 2. WATER & COAST
+    // 4. WATER DISTRICT (Ocean and Edge)
     if dist > island_size {
         if dist > island_size + 4.0 { return TileType::DeepWater; }
-        if n_detail > 0.15 { return TileType::Ship; }
-        if n_detail < -0.15 { return TileType::WaterRock; }
+        let ocean_rng = (q * 31 + r * 17).abs() % 100;
+        if ocean_rng < 2 { return TileType::Ship; }
+        if ocean_rng < 8 { return TileType::WaterRock; }
         return TileType::Water;
     }
-    if dist > island_size - 1.5 {
-        if is_path { return TileType::Dock; }
+
+    // 5. COAST DISTRICT (Sand & Docks)
+    if dist > island_size - 2.0 {
+        if is_main_path { return TileType::Dock; } // Paths end at docks
+        let sand_rng = (q * 3 + r * 7).abs() % 10;
+        if sand_rng < 2 { return TileType::SandRocks; }
         return TileType::Sand;
     }
 
-    // 3. DISTRICTS
-    // CAPITAL DISTRICT (Center)
-    if dist < 4.5 {
-        let roll = (q * 13 + r * 7).abs() % 10;
+    // 6. BIOME DISTRICTS (Using Large-Scale Noise)
+    let noise = ((q as f32 * 0.1 + seed).sin() + (r as f32 * 0.1 + seed).cos());
+
+    // DISTRICT: THE CAPITAL (Center area)
+    if dist < 5.0 {
+        let roll = (q * 7 + r * 13).abs() % 12;
         return match roll {
             0 => TileType::Castle,
             1 => TileType::Mansion,
             2 => TileType::Market,
             3 => TileType::Archery,
+            4 => TileType::Tower,
             _ => TileType::House,
         };
     }
 
-    // INDUSTRIAL PEAKS (Mountains/Mines)
+    // DISTRICT: INDUSTRIAL HIGHLANDS (High noise areas)
     if noise > 1.2 {
-        let roll = (q + r).abs() % 4;
+        let roll = (q + r).abs() % 5;
         return match roll {
             0 => TileType::Mine,
             1 => TileType::Smelter,
+            2 => TileType::WatchTower,
             _ => TileType::Mountain,
         };
     }
+    if noise > 0.8 { return TileType::Hill; }
 
-    // RURAL / AGRICULTURE
+    // DISTRICT: THE GREAT WOODS (Low noise areas)
     if noise < -0.8 {
-        if n_detail > 0.1 { return TileType::Lumber; }
+        let roll = (q * 3 + r).abs() % 4;
+        if roll == 0 { return TileType::Lumber; }
         return TileType::ForestDense;
     }
+    if noise < -0.4 { return TileType::Forest; }
 
-    let agri_roll = (q.abs() * 7 + r.abs() * 3) % 40;
-    match agri_roll {
+    // DISTRICT: THE RURAL BELT (Remaining Grasslands)
+    let rural_roll = (q.abs() * 5 + r.abs() * 2) % 30;
+    match rural_roll {
         0 => TileType::Mill,
         1 => TileType::Sheep,
-        2 => TileType::WatchTower,
-        _ => if noise < -0.4 { TileType::Forest } else { TileType::Grass }
+        _ => TileType::Grass,
     }
 }
-
 // --- SYSTEMS ---
 
 pub fn setup_hex_resources(mut commands: Commands) {
@@ -196,14 +210,15 @@ fn calculate_neighbor_mask(q: i32, r: i32, tile_map: &HashMap<(i32, i32), TileTy
         if let Some(&nt) = tile_map.get(coord) {
             match my_type {
                 TileType::River => {
-                    // Rivers connect to other rivers, water, bridges, or docks
-                    if matches!(nt, TileType::River | TileType::Bridge | TileType::Water | TileType::WaterRock | TileType::Dock | TileType::WaterMill) {
+                    if matches!(nt, TileType::River | TileType::Bridge | TileType::Water | TileType::WaterRock | TileType::WaterMill) {
                         mask |= 1 << i;
                     }
                 },
                 TileType::Path => {
-                    // Paths connect to paths, bridges, and all civic buildings
-                    if matches!(nt, TileType::Path | TileType::Bridge | TileType::Castle | TileType::House | TileType::Market | TileType::Archery | TileType::Mansion | TileType::Dock | TileType::WatchTower) {
+                    // Paths connect to EVERYTHING urban or agricultural
+                    if matches!(nt, TileType::Path | TileType::Bridge | TileType::Castle | TileType::House | 
+                                   TileType::Market | TileType::Archery | TileType::Mansion | TileType::Dock | 
+                                   TileType::Tower | TileType::Mill | TileType::Lumber) {
                         mask |= 1 << i;
                     }
                 },
@@ -787,14 +802,14 @@ impl Default for WowCameraRig {
             pitch: PI / 3.0,
             target_yaw: 0.0, 
             target_pitch: PI / 3.0,
-            min_pitch: 0.01,        // Allow looking almost perfectly flat down
+            min_pitch: 0.01,        // Straight down
             max_pitch: PI / 2.1,
-            min_dist: 15.0, 
-            max_dist: 1500.0,      // Massive range for continent view
-            zoom_sens: 40.0,       // Faster zoom for high altitudes
+            min_dist: 20.0, 
+            max_dist: 2000.0,      // Massive pull back
+            zoom_sens: 50.0,       // Fast zoom
             rot_sens: 0.003,
-            radius: 800.0,         // Start high up
-            goal_radius: 800.0, 
+            radius: 1000.0,        // Start very high
+            goal_radius: 1000.0, 
             is_user_controlling: false,
         }
     }
