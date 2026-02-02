@@ -85,30 +85,54 @@ fn get_tile_type(q: i32, r: i32, seed: f32, island_size: f32) -> TileType {
     let q_f = q as f32;
     let r_f = r as f32;
 
+
     // --- 2. ORGANIC RIVERS (Ridged Noise Network) ---
     // "Ridged" noise creates natural branching networks. 
     // We take |noise| -> inverted gives us sharp valleys.
     let river_noise_val = wn.fbm(q_f, r_f, 3, 0.5, 0.035).abs(); 
-    // Threshold: only the very bottom of the "valleys" are water
-    let is_river = river_noise_val < 0.06; 
+    
+    // Check neighbors to enforce LOCAL MINIMA (Single File Line)
+    let n_u = wn.fbm(q_f, r_f - 1.0, 3, 0.5, 0.035).abs();
+    let n_d = wn.fbm(q_f, r_f + 1.0, 3, 0.5, 0.035).abs();
+    let n_l = wn.fbm(q_f - 1.0, r_f, 3, 0.5, 0.035).abs();
+    let n_r = wn.fbm(q_f + 1.0, r_f, 3, 0.5, 0.035).abs();
+
+    // It is a river if we are lower than all neighbors (valley floor) AND below water table
+    let is_local_min = river_noise_val < n_u && river_noise_val < n_d && river_noise_val < n_l && river_noise_val < n_r;
+    let is_river = is_local_min && river_noise_val < 0.15; // Threshold slightly looser since min check is strict
 
     // --- 3. ORGANIC PATHS (Radial + Rings) ---
     // Warp the relative coordinates for wobbly paths
     let warp_strength = 4.0;
-    let warp_q = rel_q + (wn.get_noise(r_f * 0.1, seed) - 0.5) * warp_strength;
-    let warp_r = rel_r + (wn.get_noise(q_f * 0.1, seed + 10.0) - 0.5) * warp_strength;
-    let warp_dist = (warp_q.abs() + (warp_q + warp_r).abs() + warp_r.abs()) / 2.0;
-
-    // A. Radial Spokes (leading to castle)
-    let is_spoke = (warp_q.abs() < 1.0 || warp_r.abs() < 1.0 || (warp_q + warp_r).abs() < 1.0);
     
-    // B. Ring Roads (orbiting the castle)
-    // Create rings at specific distances (e.g., radius 6, 12, 18...)
-    let ring_gap = 7.0;
-    let ring_mod = warp_dist % ring_gap;
-    let is_ring = ring_mod < 1.2 && warp_dist > 4.0;
+    let get_path_noise = |qx: f32, rx: f32| -> f32 {
+        let wq = (qx - center_q) + (wn.get_noise(rx * 0.1, seed) - 0.5) * warp_strength;
+        let wr = (rx - center_r) + (wn.get_noise(qx * 0.1, seed + 10.0) - 0.5) * warp_strength;
+        // value is how close we are to "lines"
+        // Multidim logic:
+        // Radial: (atan2...) - simplified to just manhattan corridors for now?
+        // Let's stick to the previous "Spoke + Ring" math but check min/max
+        
+        let d = (wq.abs() + (wq + wr).abs() + wr.abs()) / 2.0; // Hex distance
+        
+        // Ring check:
+        let ring_dist = d % 7.0; // Modulo 7
+        let dist_to_ring = (ring_dist - 3.5).abs(); // 0 at center of ring 
+        
+        // Spoke check:
+        let spoke_val = wq.abs().min(wr.abs()).min((wq+wr).abs());
+        
+        dist_to_ring.min(spoke_val)
+    };
 
-    let is_main_path = (is_spoke || is_ring) && dist_to_center < island_size * 1.2;
+    let p_val = get_path_noise(q_f, r_f);
+    let p_u = get_path_noise(q_f, r_f - 1.0);
+    let p_d = get_path_noise(q_f, r_f + 1.0);
+    let p_l = get_path_noise(q_f - 1.0, r_f);
+    let p_r = get_path_noise(q_f + 1.0, r_f);
+
+    let is_path_min = p_val < p_u && p_val < p_d && p_val < p_l && p_val < p_r;
+    let is_main_path = is_path_min && p_val < 1.5 && dist_to_center < island_size * 1.2;
 
     // --- 4. TILE ASSIGNMENT PRIORITIES ---
 
@@ -454,12 +478,49 @@ fn spawn_hex(
 
     // Spawn Feature (The Detail)
     if let Some(glb) = feature_glb {
-        commands.spawn((
-            SceneRoot(assets.load(format!("{}#Scene0", glb))),
-            Transform::from_xyz(0.0, y_offset, 0.0)
-                .with_rotation(Quat::from_rotation_y(rotation_y))
-                .with_scale(scale_vec),
-        )).set_parent(parent_id);
+        // SPECIAL CASE: Mobile Agents (Sheep, Ship)
+        // We spawn them as separate entities, not children of the tile, so they can move.
+        if my_type == TileType::Sheep || my_type == TileType::Ship {
+            let spawn_pos = pos + Vec3::new(0.0, y_offset, 0.0);
+            
+            // Determine agent type
+            let is_ship = my_type == TileType::Ship;
+            let collider_radius = if is_ship { 1.5 } else { 0.5 };
+            
+            commands.spawn((
+                SceneRoot(assets.load(format!("{}#Scene0", glb))),
+                Transform::from_translation(spawn_pos)
+                    .with_rotation(Quat::from_rotation_y(rotation_y))
+                    .with_scale(scale_vec),
+                RigidBody::Dynamic,
+                LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z,
+                Velocity::default(),
+                Collider::ball(collider_radius),
+                Friction::coefficient(0.0),
+                Damping { linear_damping: 2.0, angular_damping: 1.0 },
+                GravityScale(1.0),
+                Steer {
+                    target: None,
+                    speed: if is_ship { 3.0 } else { 1.5 },
+                    avoid_obstacles: true,
+                    stay_on_ground: !is_ship,
+                    can_jump: !is_ship,
+                    last_jump_time: 0.0,
+                },
+                // Tag for logic
+                if is_ship { UnitType::Ship } else { UnitType::Sheep },
+            ));
+            
+            // Do NOT set parent, so it's free to move
+        } else {
+            // Standard Static Feature
+            commands.spawn((
+                SceneRoot(assets.load(format!("{}#Scene0", glb))),
+                Transform::from_xyz(0.0, y_offset, 0.0)
+                    .with_rotation(Quat::from_rotation_y(rotation_y))
+                    .with_scale(scale_vec),
+            )).set_parent(parent_id);
+        }
     }
 
     grid.spawned_tiles.insert((q, r), parent_id);
@@ -951,6 +1012,44 @@ impl Default for WowCameraRig {
         }
     }
 }
+// --- UNITS & AI ---
+
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+enum UnitType {
+    Sheep,
+    Ship,
+    Enemy,
+    Worker,
+}
+
+fn wander_system(
+    time: Res<Time>,
+    mut query: Query<(&mut Steer, &Transform, &UnitType)>,
+) {
+    let mut rng = rand::thread_rng();
+    
+    for (mut steer, trans, unit_type) in query.iter_mut() {
+        // If no target or close to target, pick new one
+        let current_pos = trans.translation;
+        
+        let needs_target = if let Some(t) = steer.target {
+            current_pos.distance(t) < 2.0
+        } else {
+            true
+        };
+
+        if needs_target {
+            // Pick random point in radius
+            // Ideally we check if it's valid (water vs land), but for now just random nearby
+            let range = 30.0;
+            let dx = rng.gen_range(-range..range);
+            let dz = rng.gen_range(-range..range);
+            let new_target = current_pos + Vec3::new(dx, 0.0, dz);
+            
+            steer.target = Some(new_target);
+        }
+    }
+}
 
 #[derive(Component)]
 struct MuzzleFlash { timer: Timer }
@@ -1038,13 +1137,16 @@ fn main() {
         })
         .insert_resource(ClearColor(Color::BLACK))
         .add_systems(PreStartup, setup_assets)
-        .add_systems(Startup, setup_hex_resources)
-        .add_systems(Startup, (setup_lighting_only, setup_player, setup_starting_village, setup_ui, setup_cursor_visuals))
+        .add_systems(Startup, setup_game)
+        .add_systems(Startup, (setup_lighting_only, setup_clouds, setup_ui, setup_cursor_visuals))
         .add_systems(Update, (
             apply_mesh_colliders,
             update_hex_map, 
             wow_camera_system,     
             sky_sphere_follow_system,
+            day_night_cycle,
+            cloud_movement_system,
+            wander_system,
 
             cursor_raycast_system,
             update_cursor_visual,
@@ -1090,17 +1192,21 @@ fn main() {
 fn bob_system(time: Res<Time>, mut q: Query<(&mut Transform, &Bob), With<RigidBody>>) {
     let t = time.elapsed_secs();
     for (mut transform, bob) in q.iter_mut() {
-        // Instead of overriding Y, we only calculate the bobbing offset
-        // We use a "base_y" approach or handle it in a child entity.
-        // For now, let's ensure the offset doesn't push the capsule bottom through the floor.
+        // Use base_y to keep them grounded, adding the sine wave as an offset
         let offset = (t * bob.speed + bob.offset).sin() * bob.amount;
         
-        // Only bob UP from the center to prevent feet clipping
-        if offset < 0.0 {
-            transform.translation.y += offset.abs() * 0.1; // Dampen downward bob
-        } else {
-            transform.translation.y += offset;
-        }
+        // Ensure we don't clip through ground (only bob UP from base)
+        let final_y = bob.base_y + offset.abs(); 
+        
+        // Soft merge with current physics Y if dynamic? 
+        // Actually, for RigidBody::Dynamic, direct translation set fights physics.
+        // But for visual bobbing of floating items (Powerups), this is fine.
+        // For Units (Capsules), we shouldn't be bobbing their TRANSFORM if they have physics.
+        // We should bob their MESH child.
+        // However, the current setup puts Bob on the root. 
+        // Let's check if it has a RigidBody.
+
+        transform.translation.y = final_y;
     }
 }
 
@@ -1138,6 +1244,12 @@ fn setup_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
 
 // --- SETUP & ENV ---
 
+#[derive(Component)]
+struct Sun;
+
+#[derive(Resource)]
+struct CycleTimer(Timer);
+
 fn setup_lighting_only(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
@@ -1150,12 +1262,12 @@ fn setup_lighting_only(
         Camera3d::default(),
         Camera { hdr: true, ..default() },
         Projection::Perspective(PerspectiveProjection {
-            far: 10000.0, // Ensure we can see the Sky Sphere at 1800.0
+            far: 10000.0, 
             ..default()
         }),
         Tonemapping::TonyMcMapface,
         Bloom { 
-            intensity: 0.5, 
+            intensity: 0.15, // Lower bloom for less glow
             low_frequency_boost: 0.7,
             ..default() 
         },
@@ -1163,43 +1275,94 @@ fn setup_lighting_only(
         Transform::from_xyz(0.0, 150.0, 150.0),
     ));
 
-    // Sun: Atmospheric Lighting
+    // 1. SKY SPHERE
+    let sky_material = sky_materials.add(SkyMaterial {
+        sun_position: Vec3::new(0.0, 100.0, 0.0),
+        turbidity: 10.0,
+        rayleigh: 2.0,
+        mie_coefficient: 0.005,
+        mie_directional_g: 0.8,
+    });
+    
     commands.spawn((
-        DirectionalLight {
-            illuminance: 8000.0, // Reduced as requested
-            shadows_enabled: true,
-            color: Color::srgb(1.0, 0.98, 0.9), 
-            ..default()
-        },
-        Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -PI / 2.5, PI / 4.0, 0.0)),
-        CascadeShadowConfigBuilder {
-            first_cascade_far_bound: 40.0,
-            maximum_distance: 400.0,
-            ..default()
-        }.build(),
-    ));
-
-    // Sky Sphere (Procedural Shader) - TEMPORARILY DISABLED DUE TO SHADER ERROR
-    // The shader needs a proper vertex shader to match the fragment shader's VertexOutput
-    /*
-    commands.spawn((
-        Mesh3d(meshes.add(Sphere::new(5000.0).mesh().uv(64, 32))),
-        MeshMaterial3d(sky_materials.add(SkyMaterial {
-            sun_position: Vec3::new(0.0, 1.0, 1.0), // Higher sun for daytime
-            turbidity: 10.0,
-            rayleigh: 2.0,
-            mie_coefficient: 0.005,
-            mie_directional_g: 0.8,
-        })),
+        Mesh3d(meshes.add(Mesh::from(Sphere::default().mesh().ico(5).unwrap()))),
+        MeshMaterial3d(sky_material),
+        Transform::from_scale(Vec3::splat(4500.0)),
         SkySphere,
         NotShadowCaster,
     ));
-    */
 
-    commands.insert_resource(AmbientLight { 
-        color: Color::srgb(0.8, 0.9, 1.0), 
-        brightness: 1500.0 // Reduced ambient slightly
+    // 2. SUN LIGHT (Directional)
+    commands.spawn((
+        DirectionalLight {
+            shadows_enabled: true,
+            illuminance: 12000.0,
+            shadow_depth_bias: 0.02,
+            shadow_normal_bias: 0.02,
+            ..default()
+        },
+        Transform::from_xyz(50.0, 50.0, 50.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Sun,
+    ));
+
+    // 3. AMBIENT LIGHT
+    commands.insert_resource(AmbientLight {
+        color: Color::srgb(0.5, 0.5, 0.8),
+        brightness: 400.0,
     });
+    
+    // 4. DAY NIGHT TIMER
+    commands.insert_resource(CycleTimer(Timer::from_seconds(120.0, TimerMode::Repeating)));
+}
+
+fn day_night_cycle(
+    time: Res<Time>,
+    mut timer: ResMut<CycleTimer>,
+    mut sky_mat_query: Query<&mut MeshMaterial3d<SkyMaterial>>,
+    mut sky_materials: ResMut<Assets<SkyMaterial>>,
+    mut sun_query: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
+    mut ambient: ResMut<AmbientLight>,
+) {
+    timer.0.tick(time.delta());
+    
+    // 0.0 to 1.0 (0=Noon, 0.5=Midnight)
+    let percent = timer.0.elapsed_secs() / timer.0.duration().secs_f32(); 
+    // Map to angle: Noon (90 deg) -> Sunset (0 deg) -> Midnight (-90) -> Sunrise
+    let angle = (percent * std::f32::consts::TAU) - std::f32::consts::FRAC_PI_2;
+    
+    // Calculate Sun Position
+    let sun_pos = Vec3::new(0.0, angle.sin(), angle.cos()) * 1000.0;
+    let sun_dir = sun_pos.normalize();
+
+    // Update Sky Material
+    for handle in sky_mat_query.iter_mut() {
+        if let Some(mat) = sky_materials.get_mut(&handle.0) {
+            mat.sun_position = sun_pos;
+        }
+    }
+
+    // Update Directional Light
+    if let Ok((mut trans, mut light)) = sun_query.get_single_mut() {
+        trans.translation = sun_dir * 100.0;
+        trans.look_at(Vec3::ZERO, Vec3::Y);
+        
+        // Dim light at night
+        let intensity = angle.sin().max(0.0); // 0.0 at night, 1.0 at noon
+        light.illuminance = intensity * 35000.0;
+        
+        // Update Ambient
+        let ambient_intensity = 150.0 + intensity * 600.0;
+        ambient.brightness = ambient_intensity;
+        
+        // Warm color at sunrise/sunset
+        if intensity < 0.3 && intensity > 0.0 {
+            ambient.color = Color::srgb(1.0, 0.6, 0.4); // Orange
+        } else if intensity <= 0.0 {
+            ambient.color = Color::srgb(0.1, 0.1, 0.3); // Deep Blue Night
+        } else {
+             ambient.color = Color::srgb(0.8, 0.8, 0.9); // Blue-ish Day
+        }
+    }
 }
 
 fn sky_sphere_follow_system(
@@ -1214,9 +1377,67 @@ fn sky_sphere_follow_system(
 }
 
 
-fn setup_player(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut materials: ResMut<Assets<StandardMaterial>>, assets: Res<GameAssets>) {
+
+fn setup_game(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    assets: Res<GameAssets>,
+) {
+    // 1. Initialize HexGridState
+    let mut grid = HexGridState {
+        spawned_tiles: HashMap::new(),
+        tile_types: HashMap::new(),
+        seed: rand::random::<f32>() * 100.0,
+    };
+    
+    // 2. Find Safe Spawn (Spiral Search)
+    let settings = WorldSettings::default();
+    let mut center_q = 0;
+    let mut center_r = 0;
+    let mut found = false;
+
+    // Spiral out to find Grass
+    'search: for radius in 0..20 {
+        for q in -radius..=radius {
+            for r in -radius..=radius {
+                if (q+r).abs() > radius { continue; }
+                
+                let t_type = get_tile_type(q, r, grid.seed, settings.island_size);
+                if t_type == TileType::Grass {
+                    center_q = q;
+                    center_r = r;
+                    found = true;
+                    break 'search;
+                }
+            }
+        }
+    }
+
+    if !found {
+        info!("No valid grass found, spawning at 0,0 anyway.");
+    } else {
+        info!("Spawn found at {}, {}", center_q, center_r);
+    }
+
+    // Insert grid resource so it persists
+    commands.insert_resource(grid);
+
+    // 3. Calc World Pos
+    let x = settings.hex_size * f32::sqrt(3.0) * (center_q as f32 + center_r as f32 / 2.0);
+    let z = settings.hex_size * 3.0 / 2.0 * center_r as f32;
+    let spawn_pos = Vec3::new(x, 40.0, z); // High up to drop in
+
+    // 4. Spawn Player
+    setup_player(&mut commands, &mut meshes, &mut materials, &assets, spawn_pos);
+
+    // 5. Spawn Village
+    setup_starting_village(&mut commands, &mut meshes, &mut materials, spawn_pos);
+}
+
+fn setup_player(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, assets: &GameAssets, pos: Vec3) {
     let radius = 1.0;
-    let length = 2.5; // Total height = 4.5
+    let length = 2.5; 
     commands.spawn((
         Mesh3d(meshes.add(Capsule3d::new(radius, length))), 
         MeshMaterial3d(materials.add(StandardMaterial {
@@ -1225,8 +1446,7 @@ fn setup_player(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
             emissive: LinearRgba::new(0.0, 0.8, 1.0, 2.0),
             ..default()
         })),
-        // Spawn slightly above ground (half-height + cushion)
-        Transform::from_xyz(0.0, 150.0, 0.0), 
+        Transform::from_translation(pos + Vec3::Y * 5.0), 
         Player { 
             fire_timer: 0.0,
             jump_count: 0,
@@ -1248,50 +1468,59 @@ fn setup_player(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
 }
 
 fn setup_starting_village(
-    mut commands: Commands, 
-    mut meshes: ResMut<Assets<Mesh>>, 
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    commands: &mut Commands, 
+    meshes: &mut Assets<Mesh>, 
+    materials: &mut Assets<StandardMaterial>,
+    center: Vec3,
 ) {
     let storage_mat = materials.add(StandardMaterial { base_color: Color::srgb(1.0, 0.8, 0.0), metallic: 0.8, ..default() });
     let hut_mat = materials.add(StandardMaterial { base_color: Color::srgb(0.6, 0.4, 0.2), ..default() });
     let barracks_mat = materials.add(StandardMaterial { base_color: Color::srgb(0.1, 0.2, 0.8), emissive: LinearRgba::new(0.0, 0.5, 2.0, 1.0), ..default() });
     let drill_mat = materials.add(StandardMaterial { base_color: Color::srgb(0.2, 0.7, 0.9), emissive: LinearRgba::new(0.0, 1.0, 2.0, 1.0), ..default() });
 
-    // 1. Storage Bin (The Hub) - Scaled Up
+    // Helper for ground snapping (approximate, since we don't have physics yet at startup)
+    // We assume y=0 is ground level for buildings if terrain is flat, 
+    // but the terrain generation spawns at y=0. However, "Grass" might be generic.
+    // Let's spawn them slightly up and let physics settle them OR use fixed logical positions.
+    // Since they are RigidBody::Fixed, they WON'T settle.
+    // We should put them at Y=4.0 (half height of 8.0 box) roughly.
+    // But relative to the center hex.
+
+    // 1. Storage Bin (The Hub)
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(12.0, 8.0, 12.0))),
         MeshMaterial3d(storage_mat),
-        Transform::from_xyz(0.0, 4.0, 0.0),
+        Transform::from_translation(center + Vec3::new(0.0, 4.0, 0.0)),
         StorageBin, Structure, Health { current: 2000.0, max: 2000.0 },
         RigidBody::Fixed, Collider::cuboid(6.0, 4.0, 6.0),
     ));
 
-    // 2. Builder Hut - Scaled Up
+    // 2. Builder Hut
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(8.0, 8.0, 8.0))),
         MeshMaterial3d(hut_mat),
-        Transform::from_xyz(-25.0, 4.0, -25.0),
+        Transform::from_translation(center + Vec3::new(-25.0, 4.0, -25.0)),
         BuilderHut { spawn_timer: Timer::from_seconds(5.0, TimerMode::Repeating), worker_count: 0, max_workers: 4 },
         Structure, Health { current: 1000.0, max: 1000.0 },
         RigidBody::Fixed, Collider::cuboid(4.0, 4.0, 4.0),
     ));
 
-    // 3. Barracks - Scaled Up
+    // 3. Barracks
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(15.0, 10.0, 15.0))),
         MeshMaterial3d(barracks_mat),
-        Transform::from_xyz(25.0, 5.0, -25.0),
+        Transform::from_translation(center + Vec3::new(25.0, 5.0, -25.0)),
         Barracks { timer: Timer::from_seconds(10.0, TimerMode::Repeating), spawn_drone_next: true },
         Structure, Health { current: 1500.0, max: 1500.0 },
         RigidBody::Fixed, Collider::cuboid(7.5, 5.0, 7.5),
     ));
 
-    // 4. Starting Drills - Scaled Up
-    for pos in [Vec3::new(-30.0, 4.0, 20.0), Vec3::new(30.0, 4.0, 20.0)] {
+    // 4. Starting Drills
+    for offset in [Vec3::new(-30.0, 0.0, 20.0), Vec3::new(30.0, 0.0, 20.0)] {
         commands.spawn((
             Mesh3d(meshes.add(Cylinder::new(4.0, 8.0))),
             MeshMaterial3d(drill_mat.clone()),
-            Transform::from_translation(pos),
+            Transform::from_translation(center + offset + Vec3::new(0.0, 4.0, 0.0)),
             Drill { timer: Timer::from_seconds(4.0, TimerMode::Repeating), storage: 0 },
             Structure, Health { current: 600.0, max: 600.0 },
             RigidBody::Fixed, Collider::cylinder(4.0, 4.0),
