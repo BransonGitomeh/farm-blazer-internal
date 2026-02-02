@@ -1632,13 +1632,14 @@ fn wow_camera_system(
     keys: Res<ButtonInput<KeyCode>>,
     mut q_win: Query<&mut Window, With<PrimaryWindow>>,
     mut q_cam: Query<(&mut Transform, &mut WowCameraRig)>,
-    mut q_player: Query<&mut Transform, (With<Player>, Without<WowCameraRig>)>,
+    mut q_player: Query<(&mut Transform, &GlobalTransform), (With<Player>, Without<WowCameraRig>)>,
     rapier: Single<&RapierContext>,
     time: Res<Time>,
 ) {
     let Ok(mut window) = q_win.get_single_mut() else { return };
     let Ok((mut cam_t, mut rig)) = q_cam.get_single_mut() else { return };
-    let Ok(mut player_t) = q_player.get_single_mut() else { return };
+    // We need both mutable Transform (for rotation) and GlobalTransform (for head pos, though we use local here safely)
+    let Ok((mut player_t, _)) = q_player.get_single_mut() else { return };
     
     let dt = time.delta_secs();
     const DEADZONE: f32 = 0.001;
@@ -1647,88 +1648,96 @@ fn wow_camera_system(
     let right_click = mouse_btn.pressed(MouseButton::Right);
     let left_click = mouse_btn.pressed(MouseButton::Left);
     
-    // Zoom - only process when events exist
-    let mut zoom_changed = false;
+    // 1. ZOOM LOGIC
     for ev in mouse_wheel.read() {
         if ev.y.abs() > DEADZONE {
-            // Dynamic zoom speed based on current distance
-            let zoom_speed = rig.zoom_sens * (1.0 + rig.goal_radius / 50.0);
+            // Slower, more controlled zoom
+            let zoom_speed = rig.zoom_sens * 2.0; 
             rig.goal_radius = (rig.goal_radius - ev.y * zoom_speed).clamp(rig.min_dist, rig.max_dist);
-            zoom_changed = true;
         }
     }
 
-    // Orbit / Steer Logic
-    let mut has_mouse_input = false;
+    // 2. ORBIT INPUT
     if right_click || left_click {
         window.cursor_options.grab_mode = CursorGrabMode::Locked;
         window.cursor_options.visible = false;
         
-        // Only read mouse motion when actually grabbed
         let delta = mouse_motion.read().fold(Vec2::ZERO, |acc, e| acc + e.delta);
-        
-        // Apply deadzone to prevent micro-movements
         if delta.length() > DEADZONE {
-            has_mouse_input = true;
             rig.target_yaw -= delta.x * rig.rot_sens;
             rig.target_pitch = (rig.target_pitch - delta.y * rig.rot_sens).clamp(rig.min_pitch, rig.max_pitch);
 
-            // If Right Click, turn player immediately (Steer)
+            // Right Click = Turn Character
             if right_click {
                 let target_player_rot = Quat::from_rotation_y(rig.target_yaw);
-                player_t.rotation = player_t.rotation.slerp(target_player_rot, dt * 15.0);
+                // Snap character rotation faster for responsiveness
+                player_t.rotation = player_t.rotation.slerp(target_player_rot, dt * 25.0);
             }
         }
     } else {
         window.cursor_options.grab_mode = CursorGrabMode::None;
         window.cursor_options.visible = true;
-        // Clear any remaining mouse events when not grabbed
         mouse_motion.clear();
     }
     
-    // Update input state
-    rig.is_user_controlling = has_mouse_input || zoom_changed;
-
-    // Smooth Camera Follow - only if there's a significant difference
+    // 3. SMOOTH ANGLE UPDATES
     let yaw_diff = rig.target_yaw - rig.yaw;
     if yaw_diff.abs() > CONVERGENCE_THRESHOLD {
-        // Use exponential decay for more natural feel
-        let smooth_factor = (dt * CAM_SMOOTH_SPEED).min(1.0);
-        rig.yaw += yaw_diff * smooth_factor;
+        rig.yaw += yaw_diff * (dt * CAM_SMOOTH_SPEED * 1.5).min(1.0);
     } else {
-        // Snap to target when close enough
         rig.yaw = rig.target_yaw;
     }
 
     let pitch_diff = rig.target_pitch - rig.pitch;
     if pitch_diff.abs() > CONVERGENCE_THRESHOLD {
-        let smooth_factor = (dt * CAM_SMOOTH_SPEED).min(1.0);
-        rig.pitch += pitch_diff * smooth_factor;
+        rig.pitch += pitch_diff * (dt * CAM_SMOOTH_SPEED * 1.5).min(1.0);
     } else {
         rig.pitch = rig.target_pitch;
     }
 
-    let radius_diff = rig.goal_radius - rig.radius;
-    if radius_diff.abs() > CONVERGENCE_THRESHOLD {
-        rig.radius += radius_diff * (dt * 5.0).min(1.0);
-    } else {
-        rig.radius = rig.goal_radius;
-    }
-
-    // Calc Position
-    let head = player_t.translation + Vec3::new(0.0, 4.5, 0.0);
+    // 4. CALCULATE DESIRED POSITION
+    let head_height = 4.5;
+    let head_pos = player_t.translation + Vec3::new(0.0, head_height, 0.0);
     let rot = Quat::from_rotation_y(rig.yaw) * Quat::from_rotation_x(-rig.pitch);
-    let desired = head + rot * Vec3::new(0.0, 0.0, rig.radius);
-
-    // Collision
-    let dir = (desired - head).normalize();
-    let mut final_pos = desired;
-    if let Some((_, dist)) = rapier.cast_ray(head, dir, rig.radius, true, QueryFilter::exclude_dynamic()) {
-        final_pos = head + dir * (dist - 0.5).max(0.5);
-    }
     
+    // Ray direction relative to camera
+    let dir = rot * Vec3::Z; 
+
+    // 5. COLLISION Logic (SphereCast)
+    // We cast a sphere backwards from the head to the camera target
+    // casting radius = 0.5 to give it volume
+    let shape = Collider::ball(0.5);
+    let max_dist = rig.goal_radius;
+    let mut hit_dist = max_dist;
+
+    if let Some((_, dist)) = rapier.cast_shape(
+        head_pos, 
+        Quat::IDENTITY, 
+        dir, 
+        &shape, 
+        ShapeCastOptions { max_time_of_impact: max_dist, ..default() },
+        QueryFilter::exclude_dynamic().exclude_sensors() 
+    ) {
+        // We hit something! Pull in.
+        hit_dist = dist; 
+    }
+
+    // 6. SMOOTH COLLISION RECOVERY
+    // If we need to pull IN (hit wall), snap instantly (or very fast).
+    // If we can push OUT (wall gone), drift slowly.
+    if hit_dist < rig.radius {
+        // Snap in immediately to avoid clipping views
+        rig.radius = hit_dist.max(1.0); 
+    } else {
+        // Drif out slowly to goal
+        let recovery_speed = 2.0; 
+        rig.radius = (rig.radius + dt * recovery_speed * (hit_dist - rig.radius)).min(hit_dist);
+    }
+
+    // 7. FINAL TRANSFORM
+    let final_pos = head_pos + dir * rig.radius;
     cam_t.translation = final_pos;
-    cam_t.look_at(head, Vec3::Y);
+    cam_t.look_at(head_pos, Vec3::Y);
 }
 
 fn cursor_raycast_system(
