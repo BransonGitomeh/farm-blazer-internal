@@ -14,6 +14,7 @@ use rand::prelude::*;
 use bevy::asset::AssetMetaCheck;
 
 mod mobile_controls;
+mod noise;
 
 // --- CONFIG ---
 // Moved to WorldSettings for dynamic adjustment
@@ -65,87 +66,102 @@ enum TileType {
 }
 
 fn get_tile_type(q: i32, r: i32, seed: f32, island_size: f32) -> TileType {
+    let wn = crate::noise::WorldNoise::new(seed as u32);
     let dist = (q.abs() + (q + r).abs() + r.abs()) as f32 / 2.0;
+
+    // Coordinates
+    let q_f = q as f32;
+    let r_f = r as f32;
+
+    // 1. ORGANIC RIVER (Domain Warped)
+    // Flows roughly North-South (along R axis), wandering in Q
+    // Warp the Q coordinate based on R
+    let river_wander = wn.fbm(r_f, seed, 3, 0.5, 0.05) * 12.0; 
+    let river_center = river_wander - 6.0; // Center around 0
+    let is_river = (q_f - river_center).abs() < 1.2;
+
+    // 2. ORGANIC PATHS (Warped Radial Spokes)
+    // Connecting center to edges but wobbly
+    let warp_freq = 0.08;
+    let warp_amp = 5.0;
     
-    // 1. THE RIVER (A continuous winding path from top to bottom)
-    // We define a center line for the river using a Sine wave
-    let river_q = (r as f32 * 0.15 + seed).sin() * 8.0;
-    let is_river = (q as f32 - river_q).abs() < 0.7;
+    let q_warp = q_f + (wn.get_noise(r_f * warp_freq, seed + 10.0) - 0.5) * warp_amp;
+    let r_warp = r_f + (wn.get_noise(q_f * warp_freq, seed + 20.0) - 0.5) * warp_amp;
+    let s_warp = (q_f + r_f) + (wn.get_noise(r_f * warp_freq, q_f * warp_freq) - 0.5) * warp_amp;
 
-    // 2. THE PATHS (Radial roads connecting the center to the cardinal directions)
-    // Guaranteed to connect at (0,0)
-    let is_main_path = (q == 0 || r == 0 || q + r == 0) && dist < island_size;
+    let path_threshold = 0.8;
+    let is_main_path = (q_warp.abs() < path_threshold || r_warp.abs() < path_threshold || s_warp.abs() < path_threshold) 
+                       && dist < island_size;
 
-    // 3. SPECIAL CROSSINGS
+    // 3. CROSSINGS & PRIORITY
     if is_river && is_main_path { return TileType::Bridge; }
-    if is_river { 
-        // 5% chance for a WaterMill if next to land
-        let mill_rng = (q * 13 + r * 7).abs() % 100;
-        if mill_rng < 5 && dist < island_size { return TileType::WaterMill; }
-        return TileType::River; 
+    
+    if is_river {
+        // Occasional WaterMill
+        let mill_noise = wn.get_noise(q_f, r_f);
+        if mill_noise > 0.92 && dist < island_size { return TileType::WaterMill; }
+        return TileType::River;
     }
+    
     if is_main_path { return TileType::Path; }
 
-    // 4. WATER DISTRICT (Ocean and Edge)
+    // 4. WATER DISTRICT
     if dist > island_size {
         if dist > island_size + 4.0 { return TileType::DeepWater; }
-        let ocean_rng = (q * 31 + r * 17).abs() % 100;
-        if ocean_rng < 2 { return TileType::Ship; }
-        if ocean_rng < 8 { return TileType::WaterRock; }
+        // Scattered rocks/ships in shallows
+        let detail = wn.get_noise(q_f * 0.5, r_f * 0.5);
+        if detail > 0.85 { return TileType::WaterRock; }
+        if detail < 0.05 { return TileType::Ship; }
         return TileType::Water;
     }
 
-    // 5. COAST DISTRICT (Sand & Docks)
+    // 5. COAST
     if dist > island_size - 2.0 {
-        if is_main_path { return TileType::Dock; } // Paths end at docks
-        let sand_rng = (q * 3 + r * 7).abs() % 10;
-        if sand_rng < 2 { return TileType::SandRocks; }
+        if is_main_path { return TileType::Dock; }
+        let sand_noise = wn.get_noise(q_f * 0.3, r_f * 0.3);
+        if sand_noise > 0.7 { return TileType::SandRocks; }
         return TileType::Sand;
     }
 
-    // 6. BIOME DISTRICTS (Using Large-Scale Noise)
-    let noise = ((q as f32 * 0.1 + seed).sin() + (r as f32 * 0.1 + seed).cos());
+    // 6. BIOMES via FBM Noise
+    let elevation = wn.fbm(q_f, r_f, 4, 0.5, 0.08); // 0.0 to 1.0 approx
+    let moisture = wn.fbm(q_f + 500.0, r_f + 500.0, 2, 0.5, 0.03); 
 
-    // DISTRICT: THE CAPITAL (Center area)
-    if dist < 5.0 {
-        let roll = (q * 7 + r * 13).abs() % 12;
-        return match roll {
-            0 => TileType::Castle,
-            1 => TileType::Mansion,
-            2 => TileType::Market,
-            3 => TileType::Archery,
-            4 => TileType::Tower,
-            _ => TileType::House,
-        };
+    // DISTRICT: CAPITAL (Center) - High density
+    if dist < 6.0 {
+        let city_noise = wn.get_noise(q_f * 0.8, r_f * 0.8);
+        if city_noise > 0.82 { return TileType::Castle; }
+        if city_noise > 0.70 { return TileType::Mansion; }
+        if city_noise > 0.60 { return TileType::Market; }
+        if city_noise > 0.50 { return TileType::Archery; }
+        if city_noise > 0.35 { return TileType::Tower; }
+        return TileType::House;
     }
 
-    // DISTRICT: INDUSTRIAL HIGHLANDS (High noise areas)
-    if noise > 1.2 {
-        let roll = (q + r).abs() % 5;
-        return match roll {
-            0 => TileType::Mine,
-            1 => TileType::Smelter,
-            2 => TileType::WatchTower,
-            _ => TileType::Mountain,
-        };
+    // MOUNTAINS / INDUSTRIAL (High Elevation)
+    if elevation > 0.75 {
+        if moisture > 0.6 { return TileType::Mine; }
+        if moisture > 0.4 { return TileType::Smelter; }
+        if moisture < 0.2 { return TileType::WatchTower; }
+        return TileType::Mountain;
     }
-    if noise > 0.8 { return TileType::Hill; }
+    if elevation > 0.6 {
+        return TileType::Hill;
+    }
 
-    // DISTRICT: THE GREAT WOODS (Low noise areas)
-    if noise < -0.8 {
-        let roll = (q * 3 + r).abs() % 4;
-        if roll == 0 { return TileType::Lumber; }
-        return TileType::ForestDense;
+    // FORESTS (High Moisture)
+    if moisture > 0.6 {
+        if elevation > 0.4 { return TileType::ForestDense; }
+        return TileType::Forest;
     }
-    if noise < -0.4 { return TileType::Forest; }
 
-    // DISTRICT: THE RURAL BELT (Remaining Grasslands)
-    let rural_roll = (q.abs() * 5 + r.abs() * 2) % 30;
-    match rural_roll {
-        0 => TileType::Mill,
-        1 => TileType::Sheep,
-        _ => TileType::Grass,
-    }
+    // RURAL/PLAINS
+    let rural_noise = wn.get_noise(q_f * 0.4, r_f * 0.4);
+    if rural_noise > 0.90 { return TileType::Mill; }
+    if rural_noise > 0.80 { return TileType::Sheep; }
+    if rural_noise < 0.10 { return TileType::Lumber; }
+
+    TileType::Grass
 }
 // --- SYSTEMS ---
 
@@ -248,7 +264,7 @@ fn spawn_hex(
 
     // surface_y hides the bottom half of the hexes for a clean grid look
     let surface_y = -(settings.tile_scale * 0.18); 
-    let scale_vec = Vec3::splat(settings.tile_scale);
+    let mut scale_vec = Vec3::splat(settings.tile_scale);
 
     let mut base_glb = "grass.glb";
     let mut feature_glb: Option<String> = None;
@@ -259,11 +275,15 @@ fn spawn_hex(
     match my_type {
         TileType::DeepWater | TileType::Water | TileType::WaterRock | TileType::Ship | TileType::Bridge => {
             base_glb = "water.glb";
-            y_offset = -2.5; // Water surface is lower
+            y_offset = -2.5; 
         }
         TileType::Sand | TileType::Dock => base_glb = "sand.glb",
-        TileType::Mountain | TileType::Mine | TileType::Smelter => base_glb = "stone.glb",
+        TileType::Mountain | TileType::Mine | TileType::Smelter => {
+             // Occasional rocky ground
+             if rng.gen_bool(0.3) { base_glb = "stone-rocks.glb"; } else { base_glb = "stone.glb"; }
+        },
         TileType::Lumber => base_glb = "dirt.glb",
+        TileType::Market | TileType::Castle => base_glb = "path-square.glb", // Paved ground
         _ => base_glb = "grass.glb",
     }
 
@@ -284,21 +304,94 @@ fn spawn_hex(
             rotation_y = -((rot_steps as f32 + 3.0) * PI / 3.0);
         }
         TileType::Castle => feature_glb = Some("building-castle.glb".into()),
-        TileType::House => feature_glb = Some("building-house.glb".into()),
-        TileType::Mansion => feature_glb = Some("unit-mansion.glb".into()),
-        TileType::Market => feature_glb = Some("building-market.glb".into()),
+        TileType::House => {
+             // Variety for houses
+             let roll = rng.gen_range(0..100);
+             feature_glb = Some(match roll {
+                 0..=40 => "building-house.glb".into(),
+                 41..=70 => "unit-house.glb".into(), // Smaller house
+                 71..=90 => "building-village.glb".into(), // Clustered
+                 _ => "building-cabin.glb".into(), // Rustic
+             });
+             rotation_y = rng.gen_range(0.0..PI * 2.0);
+        },
+        TileType::Mansion => {
+             feature_glb = Some("unit-mansion.glb".into());
+             rotation_y = rng.gen_range(0.0..PI * 2.0);
+        },
+        TileType::Market => {
+             feature_glb = Some("building-market.glb".into());
+             rotation_y = rng.gen_range(0.0..PI * 2.0);
+        },
         TileType::Archery => feature_glb = Some("building-archery.glb".into()),
         TileType::Mine => feature_glb = Some("building-mine.glb".into()),
         TileType::Smelter => feature_glb = Some("building-smelter.glb".into()),
-        TileType::Mill => feature_glb = Some("building-mill.glb".into()),
-        TileType::Sheep => feature_glb = Some("building-sheep.glb".into()),
-        TileType::Dock => { feature_glb = Some("building-dock.glb".into()); rotation_y = PI; },
-        TileType::WatchTower => feature_glb = Some("building-tower.glb".into()),
-        TileType::ForestDense => feature_glb = Some("grass-forest.glb".into()),
-        TileType::Mountain => feature_glb = Some("stone-mountain.glb".into()),
-        TileType::Hill => feature_glb = Some("grass-hill.glb".into()),
-        TileType::Ship => feature_glb = Some("unit-ship-large.glb".into()),
-        TileType::Forest => feature_glb = Some("unit-tree.glb".into()), // Spawn 1 tree centrally
+        TileType::Mill => {
+            // Variety for farms
+            if rng.gen_bool(0.3) {
+                feature_glb = Some("building-farm.glb".into());
+            } else {
+                feature_glb = Some("building-mill.glb".into());
+            }
+            rotation_y = rng.gen_range(0.0..PI * 2.0);
+        },
+        TileType::WaterMill => {
+             feature_glb = Some("building-watermill.glb".into());
+             // Orient towards water? Complicated without neighbor context, just random for now or fixed
+             rotation_y = rng.gen_range(0.0..PI * 2.0);
+        },
+        TileType::Sheep => {
+             feature_glb = Some("building-sheep.glb".into());
+             rotation_y = rng.gen_range(0.0..PI * 2.0);
+        },
+        TileType::Lumber => {
+             // Cabins or Lumber piles
+             feature_glb = Some(if rng.gen_bool(0.5) { "dirt-lumber.glb".into() } else { "building-cabin.glb".into() });
+             rotation_y = rng.gen_range(0.0..PI * 2.0);
+        },
+        TileType::Dock => { 
+            feature_glb = Some(if rng.gen_bool(0.3) { "building-port.glb".into() } else { "building-dock.glb".into() }); 
+            rotation_y = PI; 
+        },
+        TileType::WatchTower | TileType::Tower => { 
+            if rng.gen_bool(0.1) {
+                feature_glb = Some("building-wizard-tower.glb".into());
+            } else {
+                feature_glb = Some(if rng.gen_bool(0.5) { "building-tower.glb".into() } else { "unit-tower.glb".into() });
+            }
+        },
+        TileType::ForestDense => {
+             feature_glb = Some("grass-forest.glb".into());
+             rotation_y = rng.gen_range(0.0..PI * 2.0);
+             scale_vec *= rng.gen_range(0.85..1.15); 
+        },
+        TileType::Mountain => {
+             feature_glb = Some("stone-mountain.glb".into());
+             rotation_y = rng.gen_range(0.0..PI * 2.0);
+             scale_vec *= rng.gen_range(0.9..1.3);
+        },
+        TileType::Hill => {
+             // Mix stone hills and grass hills
+             feature_glb = Some(if rng.gen_bool(0.3) { "stone-hill.glb".into() } else { "grass-hill.glb".into() });
+             rotation_y = rng.gen_range(0.0..PI * 2.0);
+        },
+        TileType::Ship => {
+             feature_glb = Some(if rng.gen_bool(0.5) { "unit-ship.glb".into() } else { "unit-ship-large.glb".into() });
+             rotation_y = rng.gen_range(0.0..PI * 2.0);
+        },
+        TileType::Forest => {
+             feature_glb = Some("unit-tree.glb".into()); // Spawn 1 tree centrally
+             rotation_y = rng.gen_range(0.0..PI * 2.0);
+             scale_vec *= rng.gen_range(0.8..1.2);
+        },
+        TileType::WaterRock => {
+             feature_glb = Some("water-rocks.glb".into());
+             rotation_y = rng.gen_range(0.0..PI * 2.0);
+        },
+        TileType::SandRocks => {
+             feature_glb = Some("sand-rocks.glb".into());
+             rotation_y = rng.gen_range(0.0..PI * 2.0);
+        }, 
         _ => {}
     }
 
@@ -1089,7 +1182,7 @@ fn setup_player(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>, mut ma
             ..default()
         })),
         // Spawn slightly above ground (half-height + cushion)
-        Transform::from_xyz(0.0, 5.0, 0.0), 
+        Transform::from_xyz(0.0, 150.0, 0.0), 
         Player { 
             fire_timer: 0.0,
             jump_count: 0,
