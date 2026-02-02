@@ -67,99 +67,131 @@ enum TileType {
 
 fn get_tile_type(q: i32, r: i32, seed: f32, island_size: f32) -> TileType {
     let wn = crate::noise::WorldNoise::new(seed as u32);
-    let dist = (q.abs() + (q + r).abs() + r.abs()) as f32 / 2.0;
+    
+    // --- 1. MOVABLE CENTER (The Capital) ---
+    // Use noise to offset the "center" of the world from (0,0)
+    // This makes the castle appear in different spots per seed
+    let center_q = (wn.get_noise(seed, seed) - 0.5) * island_size * 0.8;
+    let center_r = (wn.get_noise(seed + 50.0, seed) - 0.5) * island_size * 0.8;
+    
+    // Relative coordinates to the capital
+    let rel_q = q as f32 - center_q;
+    let rel_r = r as f32 - center_r;
+    let dist_to_center = (rel_q.abs() + (rel_q + rel_r).abs() + rel_r.abs()) / 2.0;
+    
+    let dist_from_origin = (q.abs() + (q + r).abs() + r.abs()) as f32 / 2.0;
 
-    // Coordinates
+    // Coordinates for noise
     let q_f = q as f32;
     let r_f = r as f32;
 
-    // 1. ORGANIC RIVER (Domain Warped)
-    // Flows roughly North-South (along R axis), wandering in Q
-    // Warp the Q coordinate based on R
-    let river_wander = wn.fbm(r_f, seed, 3, 0.5, 0.05) * 12.0; 
-    let river_center = river_wander - 6.0; // Center around 0
-    let is_river = (q_f - river_center).abs() < 1.2;
+    // --- 2. ORGANIC RIVERS (Ridged Noise Network) ---
+    // "Ridged" noise creates natural branching networks. 
+    // We take |noise| -> inverted gives us sharp valleys.
+    let river_noise_val = wn.fbm(q_f, r_f, 3, 0.5, 0.035).abs(); 
+    // Threshold: only the very bottom of the "valleys" are water
+    let is_river = river_noise_val < 0.06; 
 
-    // 2. ORGANIC PATHS (Warped Radial Spokes)
-    // Connecting center to edges but wobbly
-    let warp_freq = 0.08;
-    let warp_amp = 5.0;
+    // --- 3. ORGANIC PATHS (Radial + Rings) ---
+    // Warp the relative coordinates for wobbly paths
+    let warp_strength = 4.0;
+    let warp_q = rel_q + (wn.get_noise(r_f * 0.1, seed) - 0.5) * warp_strength;
+    let warp_r = rel_r + (wn.get_noise(q_f * 0.1, seed + 10.0) - 0.5) * warp_strength;
+    let warp_dist = (warp_q.abs() + (warp_q + warp_r).abs() + warp_r.abs()) / 2.0;
+
+    // A. Radial Spokes (leading to castle)
+    let is_spoke = (warp_q.abs() < 1.0 || warp_r.abs() < 1.0 || (warp_q + warp_r).abs() < 1.0);
     
-    let q_warp = q_f + (wn.get_noise(r_f * warp_freq, seed + 10.0) - 0.5) * warp_amp;
-    let r_warp = r_f + (wn.get_noise(q_f * warp_freq, seed + 20.0) - 0.5) * warp_amp;
-    let s_warp = (q_f + r_f) + (wn.get_noise(r_f * warp_freq, q_f * warp_freq) - 0.5) * warp_amp;
+    // B. Ring Roads (orbiting the castle)
+    // Create rings at specific distances (e.g., radius 6, 12, 18...)
+    let ring_gap = 7.0;
+    let ring_mod = warp_dist % ring_gap;
+    let is_ring = ring_mod < 1.2 && warp_dist > 4.0;
 
-    let path_threshold = 0.8;
-    let is_main_path = (q_warp.abs() < path_threshold || r_warp.abs() < path_threshold || s_warp.abs() < path_threshold) 
-                       && dist < island_size;
+    let is_main_path = (is_spoke || is_ring) && dist_to_center < island_size * 1.2;
 
-    // 3. CROSSINGS & PRIORITY
+    // --- 4. TILE ASSIGNMENT PRIORITIES ---
+
+    // Crossings
     if is_river && is_main_path { return TileType::Bridge; }
     
+    // Water Features
     if is_river {
-        // Occasional WaterMill
-        let mill_noise = wn.get_noise(q_f, r_f);
-        if mill_noise > 0.92 && dist < island_size { return TileType::WaterMill; }
+        let mill_chance = wn.get_noise(q_f * 2.3, r_f * 2.3);
+        if mill_chance > 0.85 && dist_to_center < island_size { return TileType::WaterMill; }
         return TileType::River;
     }
     
     if is_main_path { return TileType::Path; }
 
-    // 4. WATER DISTRICT
-    if dist > island_size {
-        if dist > island_size + 4.0 { return TileType::DeepWater; }
-        // Scattered rocks/ships in shallows
+    // --- 5. OCEAN / ISLAND SHAPE ---
+    // Use original distance logic for the island shape itself unless we want the island to move too?
+    // Let's keep the landmass somewhat centered on (0,0) but the Kingdom centered on center_q/r
+    // Actually, making the island shape noise-based is better.
+    let island_noise = wn.fbm(q_f, r_f, 2, 0.5, 0.05);
+    let coastline_threshold = island_size + island_noise * 5.0;
+    
+    if dist_from_origin > coastline_threshold {
+        if dist_from_origin > coastline_threshold + 4.0 { return TileType::DeepWater; }
         let detail = wn.get_noise(q_f * 0.5, r_f * 0.5);
         if detail > 0.85 { return TileType::WaterRock; }
         if detail < 0.05 { return TileType::Ship; }
         return TileType::Water;
     }
 
-    // 5. COAST
-    if dist > island_size - 2.0 {
+    if dist_from_origin > coastline_threshold - 2.0 {
         if is_main_path { return TileType::Dock; }
         let sand_noise = wn.get_noise(q_f * 0.3, r_f * 0.3);
         if sand_noise > 0.7 { return TileType::SandRocks; }
         return TileType::Sand;
     }
 
-    // 6. BIOMES via FBM Noise
-    let elevation = wn.fbm(q_f, r_f, 4, 0.5, 0.08); // 0.0 to 1.0 approx
+    // --- 6. BIOMES & CITY ---
+    let elevation = wn.fbm(q_f, r_f, 4, 0.5, 0.08); 
     let moisture = wn.fbm(q_f + 500.0, r_f + 500.0, 2, 0.5, 0.03); 
 
-    // DISTRICT: CAPITAL (Center) - High density
-    if dist < 6.0 {
-        let city_noise = wn.get_noise(q_f * 0.8, r_f * 0.8);
-        if city_noise > 0.82 { return TileType::Castle; }
-        if city_noise > 0.70 { return TileType::Mansion; }
-        if city_noise > 0.60 { return TileType::Market; }
-        if city_noise > 0.50 { return TileType::Archery; }
-        if city_noise > 0.35 { return TileType::Tower; }
-        return TileType::House;
+    // CAPITAL CITY (High density around movable center)
+    // Expanded radius for more houses
+    if dist_to_center < 8.5 {
+        let density = 1.0 - (dist_to_center / 8.5); 
+        let noise_mod = wn.get_noise(q_f * 0.8, r_f * 0.8);
+        
+        // Inner Sanctum
+        if dist_to_center < 1.8 { return TileType::Castle; }
+        
+        // Urban Sprawl - lowered threshold for more houses
+        if density + noise_mod * 0.3 > 0.45 {
+            if noise_mod > 0.85 { return TileType::Mansion; }
+            if noise_mod > 0.70 { return TileType::Market; }
+            if noise_mod > 0.60 { return TileType::Archery; }
+            if noise_mod > 0.50 { return TileType::Tower; }
+            return TileType::House; 
+        }
     }
 
-    // MOUNTAINS / INDUSTRIAL (High Elevation)
+    // MOUNTAINS / INDUSTRIAL
     if elevation > 0.75 {
-        if moisture > 0.6 { return TileType::Mine; }
-        if moisture > 0.4 { return TileType::Smelter; }
-        if moisture < 0.2 { return TileType::WatchTower; }
+        if moisture > 0.7 { return TileType::Mine; } // Rare
+        if moisture > 0.55 { return TileType::Smelter; }
+        if moisture < 0.15 { return TileType::WatchTower; } // Rare
         return TileType::Mountain;
     }
     if elevation > 0.6 {
         return TileType::Hill;
     }
 
-    // FORESTS (High Moisture)
+    // FORESTS
     if moisture > 0.6 {
-        if elevation > 0.4 { return TileType::ForestDense; }
+        if elevation > 0.3 { return TileType::ForestDense; }
         return TileType::Forest;
     }
 
-    // RURAL/PLAINS
-    let rural_noise = wn.get_noise(q_f * 0.4, r_f * 0.4);
-    if rural_noise > 0.90 { return TileType::Mill; }
-    if rural_noise > 0.80 { return TileType::Sheep; }
-    if rural_noise < 0.10 { return TileType::Lumber; }
+    // RURAL
+    let rural_noise = wn.get_noise(q_f * 0.45, r_f * 0.45);
+    // Very rare Mills as requested ("maybe 1 or 2")
+    if rural_noise > 0.96 { return TileType::Mill; } 
+    if rural_noise > 0.85 { return TileType::Sheep; }
+    if rural_noise < 0.08 { return TileType::Lumber; }
 
     TileType::Grass
 }
@@ -274,16 +306,22 @@ fn spawn_hex(
     // --- LAYER 1: THE GRID BASE ---
     match my_type {
         TileType::DeepWater | TileType::Water | TileType::WaterRock | TileType::Ship | TileType::Bridge => {
-            base_glb = "water.glb";
+            if rng.gen_bool(0.1) { base_glb = "water-island.glb"; } else { base_glb = "water.glb"; }
             y_offset = -2.5; 
         }
-        TileType::Sand | TileType::Dock => base_glb = "sand.glb",
+        TileType::Sand | TileType::Dock => {
+            if rng.gen_bool(0.3) { base_glb = "sand-desert.glb"; } else { base_glb = "sand.glb"; }
+        },
         TileType::Mountain | TileType::Mine | TileType::Smelter => {
              // Occasional rocky ground
              if rng.gen_bool(0.3) { base_glb = "stone-rocks.glb"; } else { base_glb = "stone.glb"; }
         },
         TileType::Lumber => base_glb = "dirt.glb",
-        TileType::Market | TileType::Castle => base_glb = "path-square.glb", // Paved ground
+        TileType::Market => base_glb = "path-square.glb", 
+        TileType::Castle => {
+            // Castle complex sometimes gets walls or paved square
+            if rng.gen_bool(0.5) { base_glb = "path-square.glb"; } else { base_glb = "path-square-end.glb"; }
+        }
         _ => base_glb = "grass.glb",
     }
 
@@ -303,7 +341,13 @@ fn spawn_hex(
             let (_, rot_steps) = get_connection_model(mask);
             rotation_y = -((rot_steps as f32 + 3.0) * PI / 3.0);
         }
-        TileType::Castle => feature_glb = Some("building-castle.glb".into()),
+        TileType::Castle => {
+            // Use walls for the castle itself logic
+            let r = rng.gen_range(0..10);
+            if r < 6 { feature_glb = Some("building-castle.glb".into()); }
+            else if r < 8 { feature_glb = Some("building-wall.glb".into()); }
+            else { feature_glb = Some("building-walls.glb".into()); }
+        },
         TileType::House => {
              // Variety for houses
              let roll = rng.gen_range(0..100);
