@@ -830,6 +830,45 @@ struct PhaseManager {
     is_combat: bool,
 }
 
+
+#[derive(Resource)]
+struct SpatialHash {
+    grid: HashMap<(i32, i32), Vec<Entity>>,
+    cell_size: f32,
+}
+
+impl Default for SpatialHash {
+    fn default() -> Self {
+        Self { grid: HashMap::new(), cell_size: 10.0 }
+    }
+}
+
+impl SpatialHash {
+    fn insert(&mut self, entity: Entity, pos: Vec3) {
+        let key = (
+            (pos.x / self.cell_size).floor() as i32,
+            (pos.z / self.cell_size).floor() as i32
+        );
+        self.grid.entry(key).or_default().push(entity);
+    }
+
+    fn get_nearby(&self, pos: Vec3, range: f32) -> Vec<Entity> {
+        let mut nearby = Vec::new();
+        let range_cells = (range / self.cell_size).ceil() as i32;
+        let center_x = (pos.x / self.cell_size).floor() as i32;
+        let center_z = (pos.z / self.cell_size).floor() as i32;
+
+        for x in -range_cells..=range_cells {
+            for z in -range_cells..=range_cells {
+                if let Some(entities) = self.grid.get(&(center_x + x, center_z + z)) {
+                    nearby.extend(entities);
+                }
+            }
+        }
+        nearby
+    }
+}
+
 #[derive(Resource)]
 struct GameAssets {
     debug_tex: Handle<Image>,
@@ -1130,6 +1169,7 @@ fn main() {
         .init_resource::<WorldCursor>()
         .init_resource::<SelectionState>()
         .init_resource::<WorldSettings>()
+        .init_resource::<SpatialHash>()
         .insert_resource(PhaseManager { 
             timer: Timer::from_seconds(60.0, TimerMode::Once), 
             wave: 1, 
@@ -1138,14 +1178,12 @@ fn main() {
         .insert_resource(ClearColor(Color::BLACK))
         .add_systems(PreStartup, setup_assets)
         .add_systems(Startup, setup_game)
-        .add_systems(Startup, (setup_lighting_only, setup_clouds, setup_ui, setup_cursor_visuals))
+        .add_systems(Startup, (setup_lighting_only, setup_ui, setup_cursor_visuals))
         .add_systems(Update, (
+            update_spatial_hash,
             apply_mesh_colliders,
             update_hex_map, 
             wow_camera_system,     
-            sky_sphere_follow_system,
-            day_night_cycle,
-            cloud_movement_system,
             wander_system,
 
             cursor_raycast_system,
@@ -1326,7 +1364,7 @@ fn day_night_cycle(
     timer.0.tick(time.delta());
     
     // 0.0 to 1.0 (0=Noon, 0.5=Midnight)
-    let percent = timer.0.elapsed_secs() / timer.0.duration().secs_f32(); 
+    let percent = timer.0.elapsed_secs() / timer.0.duration().as_secs_f32(); 
     // Map to angle: Noon (90 deg) -> Sunset (0 deg) -> Midnight (-90) -> Sunrise
     let angle = (percent * std::f32::consts::TAU) - std::f32::consts::FRAC_PI_2;
     
@@ -1401,7 +1439,8 @@ fn setup_game(
     'search: for radius in 0..20 {
         for q in -radius..=radius {
             for r in -radius..=radius {
-                if (q+r).abs() > radius { continue; }
+                let dist = (q + r).abs();
+                if dist > radius { continue; }
                 
                 let t_type = get_tile_type(q, r, grid.seed, settings.island_size);
                 if t_type == TileType::Grass {
@@ -2717,10 +2756,21 @@ fn enemy_jump_system(
     }
 }
 
+fn update_spatial_hash(
+    mut hash: ResMut<SpatialHash>,
+    q_entities: Query<(Entity, &GlobalTransform), With<RigidBody>>,
+) {
+    hash.grid.clear();
+    for (e, t) in q_entities.iter() {
+        hash.insert(e, t.translation());
+    }
+}
+
 fn steering_system(
     mut q_steer: Query<(Entity, &mut Velocity, &mut Steer, &Transform)>,
-    q_neighbors: Query<(Entity, &Transform), With<Velocity>>,
+    mut q_neighbors: Query<(Entity, &Transform), With<Velocity>>,
     q_obstacles: Query<&GlobalTransform, With<Structure>>,
+    hash: Res<SpatialHash>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
@@ -2746,17 +2796,21 @@ fn steering_system(
             }
         }
 
-        // 2. SEPARATION
+        // 2. SEPARATION (OPTIMIZED WITH SPATIAL HASH)
         let mut sep_acc = Vec3::ZERO;
-        for (e2, t2) in q_neighbors.iter() {
+        let neighbors = hash.get_nearby(t1.translation, 3.0);
+        
+        for e2 in neighbors {
             if e1 == e2 { continue; }
-            let dist = t1.translation.distance(t2.translation);
-            if dist < 3.0 && dist > 0.0 {
-                sep_acc += (t1.translation - t2.translation).normalize() / dist;
+            if let Ok((_, t2)) = q_neighbors.get(e2) {
+                let dist = t1.translation.distance(t2.translation);
+                if dist < 3.0 && dist > 0.0 {
+                    sep_acc += (t1.translation - t2.translation).normalize() / dist;
+                }
             }
         }
         steer_acc += sep_acc * 20.0;
-
+        
         // 3. OBSTACLE AVOIDANCE (Simple)
         let mut avoid_acc = Vec3::ZERO;
         for obs in q_obstacles.iter() {
