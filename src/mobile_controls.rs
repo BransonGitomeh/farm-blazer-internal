@@ -18,7 +18,7 @@ struct JoystickBase;
 
 #[derive(Component)]
 struct JoystickKnob {
-    drag_start: Option<Vec2>,
+    _drag_start: Option<Vec2>,
 }
 
 #[derive(Component)]
@@ -97,7 +97,7 @@ fn setup_mobile_ui(mut commands: Commands) {
             },
             BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.5)),
             BorderRadius::all(Val::Percent(50.0)),
-            JoystickKnob { drag_start: None },
+            JoystickKnob { _drag_start: None },
             PickingBehavior::IGNORE, // Base handles interaction
         ))
         .id();
@@ -170,16 +170,16 @@ fn handle_joystick_input(
     mut input: ResMut<MobileInput>,
     // 1. Query ComputedNode instead of Node to get actual dimensions
     mut q_base: Query<(&Interaction, &GlobalTransform, &ComputedNode), With<JoystickBase>>,
-    mut q_knob: Query<&mut Transform, With<JoystickKnob>>,
+    mut q_knob: Query<(&mut Transform, &mut JoystickKnob)>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
 ) {
     let Ok((interaction, base_gt, computed_node)) = q_base.get_single_mut() else { return };
-    let Ok(mut knob_t) = q_knob.get_single_mut() else { return };
+    let Ok((mut knob_t, mut knob)) = q_knob.get_single_mut() else { return };
     let Ok(window) = primary_window.get_single() else { return };
 
     // 2. Use .size() from ComputedNode
     let base_radius = computed_node.size().x / 2.0; 
-    let center = base_gt.translation().truncate();
+    let _center = base_gt.translation().truncate();
 
     // Reset by default
     input.move_axis = Vec2::ZERO;
@@ -188,7 +188,11 @@ fn handle_joystick_input(
     match interaction {
         Interaction::Pressed => {
             if let Some(cursor_pos) = window.cursor_position() {
-                let offset = cursor_pos - center;
+                // If we don't have a drag start yet, this is the first frame of the press
+                let drag_start = knob._drag_start.get_or_insert(cursor_pos);
+                
+                // Offset is relative to where the finger first touched
+                let offset = cursor_pos - *drag_start;
                 let dist = offset.length();
                 let clamped_dist = dist.min(base_radius);
                 
@@ -204,6 +208,7 @@ fn handle_joystick_input(
         }
         Interaction::None | Interaction::Hovered => {
             knob_pos = Vec2::ZERO;
+            knob._drag_start = None; // Reset on release
         }
     }
     
