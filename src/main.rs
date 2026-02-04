@@ -405,8 +405,6 @@ fn spawn_hex(
         },
         TileType::Smelter => {
             feature_glb = Some("building-smelter.glb".into());
-            // Add some "custom model" props
-            spawn_custom_model(commands, assets, "unit-worker.glb", pos, 0.5, 0.0, 0.8);
         },
         TileType::Mill => {
             // Variety for farms
@@ -678,7 +676,20 @@ fn get_intersection_model(mask: u8) -> (&'static str, u8) {
         ("straight",     0b001001), // East to West (180°)
         ("corner",       0b000101), // East to SW (120° Wide Turn - Standard Kenney)
         ("corner-sharp", 0b000011), // East to SE (60° Sharp Turn)
-        ("intersection", 0b001011), // T-junction style
+        
+        // --- 3 Connections ---
+        ("intersectionA", 0b000111), // 3 Adjacent
+        ("intersectionB", 0b001011), // 2 Adjacent + 1 Gap
+        ("intersectionC", 0b010011), // 2 Adjacent + 2 Gap
+        ("intersectionD", 0b010101), // Balanced Y
+        
+        // --- 4 Connections ---
+        ("intersectionE", 0b001111), 
+        ("intersectionF", 0b010111),
+        ("intersectionG", 0b011011),
+        
+        // --- 5 Connections ---
+        ("intersectionH", 0b011111),
     ];
 
     // Try to find a match by rotating the mask 6 times
@@ -1044,7 +1055,7 @@ struct WowCameraRig {
     pub zoom_sens: f32,
     pub rot_sens: f32,
     // Input state tracking
-    pub _is_user_controlling: bool,
+    pub is_user_controlling: bool,
 }
 
 impl Default for WowCameraRig {
@@ -1062,7 +1073,7 @@ impl Default for WowCameraRig {
             rot_sens: 0.003,
             radius: 1000.0,        // Start very high
             goal_radius: 1000.0, 
-            _is_user_controlling: false,
+            is_user_controlling: false,
         }
     }
 }
@@ -1369,7 +1380,10 @@ fn setup_lighting_only(
     });
     
     // 4. DAY NIGHT TIMER
-    commands.insert_resource(CycleTimer(Timer::from_seconds(120.0, TimerMode::Repeating)));
+    // Use 60.0 to start at noon (middle of 120s cycle)
+    let mut timer = Timer::from_seconds(120.0, TimerMode::Repeating);
+    timer.set_elapsed(std::time::Duration::from_f32(60.0));
+    commands.insert_resource(CycleTimer(timer));
 }
 
 #[allow(dead_code)]
@@ -1418,7 +1432,7 @@ fn day_night_cycle(
         } else if intensity <= 0.0 {
             ambient.color = Color::srgb(0.1, 0.1, 0.3); // Deep Blue Night
         } else {
-             ambient.color = Color::srgb(0.8, 0.8, 0.9); // Blue-ish Day
+             ambient.color = Color::srgb(0.9, 0.9, 1.0); // Slightly brighter blue-ish Day
         }
     }
 }
@@ -1626,6 +1640,7 @@ fn setup_cursor_visuals(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>
 struct AnimatedPointer;
 
 #[derive(Component)]
+#[allow(dead_code)]
 struct Ghost;
 
 fn setup_ui(mut commands: Commands) {
@@ -1659,14 +1674,24 @@ fn wow_camera_system(
 ) {
     let Ok(mut window) = q_win.get_single_mut() else { return };
     let Ok((mut cam_t, mut rig)) = q_cam.get_single_mut() else { return };
-    if rig._is_user_controlling {
-        // Here we could add code that runs only when the user is specifically logic-controlling
-        // But for now, user is ALWAYS controlling if this system runs.
-        // Let's use it to toggle Orbit input.
-    }
-    let Ok((mut player_t, _)) = q_player.get_single_mut() else { return };
-    
     let dt = time.delta_secs();
+    
+    // Toggle user control with 'C'
+    if _keys.just_pressed(KeyCode::KeyC) {
+        rig.is_user_controlling = !rig.is_user_controlling;
+        info!("Camera User Control: {}", rig.is_user_controlling);
+    }
+    
+    let Ok((mut player_t, player_gt)) = q_player.get_single_mut() else { return };
+    
+    // If not user controlling, follow player's rotation
+    if !rig.is_user_controlling {
+        let player_yaw = player_gt.compute_transform().rotation.to_euler(EulerRot::YXZ).0;
+        // Smoothly lerp camera target yaw to player's yaw
+        rig.target_yaw = rig.target_yaw.lerp(player_yaw, dt * 5.0);
+    }
+    
+    
     const DEADZONE: f32 = 0.001;
     const CONVERGENCE_THRESHOLD: f32 = 0.0001;
     
