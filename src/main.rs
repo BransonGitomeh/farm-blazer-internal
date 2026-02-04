@@ -34,7 +34,7 @@ impl Default for WorldSettings {
     fn default() -> Self {
         Self {
             hex_size: 50.0, 
-            tile_scale: 86.0, 
+            tile_scale: 50.0,  // Reduced from 86.0 for better proportions
             render_distance: 35, // Increased to see the larger horizon
             island_size: 25.0,    // Doubled landmass radius (~1,800 tiles)
         }
@@ -1685,6 +1685,7 @@ struct Ghost;
 
 fn setup_ui(mut commands: Commands) {
     commands.spawn(Node { width: Val::Percent(100.0), padding: UiRect::all(Val::Px(10.0)), ..default() }).with_children(|root| {
+        // Main HUD
         root.spawn((
             Node {
                 position_type: PositionType::Absolute, left: Val::Px(10.0), top: Val::Px(10.0),
@@ -1695,6 +1696,47 @@ fn setup_ui(mut commands: Commands) {
             BorderRadius::all(Val::Px(8.0)),
         )).with_children(|panel| {
             panel.spawn((Text::new("Init..."), TextFont { font_size: 16.0, ..default() }, TextColor(Color::WHITE), HudText));
+        });
+        
+        // Help Overlay (Bottom Right)
+        root.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(10.0),
+                bottom: Val::Px(10.0),
+                padding: UiRect::all(Val::Px(12.0)),
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(4.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+            BorderRadius::all(Val::Px(8.0)),
+        )).with_children(|help| {
+            help.spawn((
+                Text::new("🖱️ CONTROLS"),
+                TextFont { font_size: 14.0, ..default() },
+                TextColor(Color::srgb(0.0, 0.95, 1.0)),
+            ));
+            help.spawn((
+                Text::new("Click: Lock Camera"),
+                TextFont { font_size: 12.0, ..default() },
+                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.8)),
+            ));
+            help.spawn((
+                Text::new("ESC: Release Cursor"),
+                TextFont { font_size: 12.0, ..default() },
+                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.8)),
+            ));
+            help.spawn((
+                Text::new("Alt+Drag: Select Units"),
+                TextFont { font_size: 12.0, ..default() },
+                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.8)),
+            ));
+            help.spawn((
+                Text::new("Scroll: Zoom"),
+                TextFont { font_size: 12.0, ..default() },
+                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.8)),
+            ));
         });
     });
 }
@@ -1747,11 +1789,22 @@ fn wow_camera_system(
         }
     }
 
-    // 2. ORBIT INPUT
-    if right_click || left_click {
+    // 2. ORBIT INPUT (Web-friendly: click to lock, ESC to release)
+    // Check for Escape key to release cursor
+    if _keys.just_pressed(KeyCode::Escape) {
+        window.cursor_options.grab_mode = CursorGrabMode::None;
+        window.cursor_options.visible = true;
+        mouse_motion.clear();
+    }
+    
+    // Click anywhere to lock cursor for camera rotation
+    if mouse_btn.just_pressed(MouseButton::Left) || mouse_btn.just_pressed(MouseButton::Right) {
         window.cursor_options.grab_mode = CursorGrabMode::Locked;
         window.cursor_options.visible = false;
-        
+    }
+    
+    // Rotate camera when cursor is locked
+    if window.cursor_options.grab_mode == CursorGrabMode::Locked {
         let delta = mouse_motion.read().fold(Vec2::ZERO, |acc, e| acc + e.delta);
         if delta.length() > DEADZONE {
             rig.target_yaw -= delta.x * rig.rot_sens;
@@ -1764,10 +1817,6 @@ fn wow_camera_system(
                 player_t.rotation = player_t.rotation.slerp(target_player_rot, dt * 25.0);
             }
         }
-    } else {
-        window.cursor_options.grab_mode = CursorGrabMode::None;
-        window.cursor_options.visible = true;
-        mouse_motion.clear();
     }
     
     // 3. SMOOTH ANGLE UPDATES
