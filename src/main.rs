@@ -1,7 +1,7 @@
 use bevy::input::mouse::{MouseMotion, MouseWheel};
 use bevy::pbr::{NotShadowCaster, MaterialPlugin};
 use bevy::prelude::*;
-use bevy::window::{CursorGrabMode, PrimaryWindow};
+use bevy::window::PrimaryWindow;
 use bevy_rapier3d::prelude::*;
 use std::f32::consts::PI;
 use bevy::core_pipeline::tonemapping::Tonemapping;
@@ -1713,17 +1713,22 @@ fn setup_ui(mut commands: Commands) {
             BorderRadius::all(Val::Px(8.0)),
         )).with_children(|help| {
             help.spawn((
-                Text::new("🖱️ CONTROLS"),
+                Text::new("🎮 CONTROLS"),
                 TextFont { font_size: 14.0, ..default() },
                 TextColor(Color::srgb(0.0, 0.95, 1.0)),
             ));
             help.spawn((
-                Text::new("Click: Lock Camera"),
+                Text::new("Right-Click Drag: Rotate Camera"),
                 TextFont { font_size: 12.0, ..default() },
                 TextColor(Color::srgba(1.0, 1.0, 1.0, 0.8)),
             ));
             help.spawn((
-                Text::new("ESC: Release Cursor"),
+                Text::new("WASD: Move"),
+                TextFont { font_size: 12.0, ..default() },
+                TextColor(Color::srgba(1.0, 1.0, 1.0, 0.8)),
+            ));
+            help.spawn((
+                Text::new("Left-Click: Attack/Build"),
                 TextFont { font_size: 12.0, ..default() },
                 TextColor(Color::srgba(1.0, 1.0, 1.0, 0.8)),
             ));
@@ -1754,7 +1759,7 @@ fn wow_camera_system(
     rapier: Single<&RapierContext>,
     time: Res<Time>,
 ) {
-    let Ok(mut window) = q_win.get_single_mut() else { return };
+    let Ok(_window) = q_win.get_single_mut() else { return };
     let Ok((mut cam_t, mut rig)) = q_cam.get_single_mut() else { return };
     let dt = time.delta_secs();
     
@@ -1778,7 +1783,7 @@ fn wow_camera_system(
     const CONVERGENCE_THRESHOLD: f32 = 0.0001;
     
     let right_click = mouse_btn.pressed(MouseButton::Right);
-    let left_click = mouse_btn.pressed(MouseButton::Left);
+    let _left_click = mouse_btn.pressed(MouseButton::Left);
     
     // 1. ZOOM LOGIC
     for ev in mouse_wheel.read() {
@@ -1789,34 +1794,21 @@ fn wow_camera_system(
         }
     }
 
-    // 2. ORBIT INPUT (Web-friendly: click to lock, ESC to release)
-    // Check for Escape key to release cursor
-    if _keys.just_pressed(KeyCode::Escape) {
-        window.cursor_options.grab_mode = CursorGrabMode::None;
-        window.cursor_options.visible = true;
-        mouse_motion.clear();
-    }
-    
-    // Click anywhere to lock cursor for camera rotation
-    if mouse_btn.just_pressed(MouseButton::Left) || mouse_btn.just_pressed(MouseButton::Right) {
-        window.cursor_options.grab_mode = CursorGrabMode::Locked;
-        window.cursor_options.visible = false;
-    }
-    
-    // Rotate camera when cursor is locked
-    if window.cursor_options.grab_mode == CursorGrabMode::Locked {
+    // 2. WOW-STYLE CAMERA CONTROLS
+    // Right-click and drag to rotate camera (cursor stays visible)
+    if right_click {
         let delta = mouse_motion.read().fold(Vec2::ZERO, |acc, e| acc + e.delta);
         if delta.length() > DEADZONE {
             rig.target_yaw -= delta.x * rig.rot_sens;
             rig.target_pitch = (rig.target_pitch - delta.y * rig.rot_sens).clamp(rig.min_pitch, rig.max_pitch);
 
-            // Right Click = Turn Character
-            if right_click {
-                let target_player_rot = Quat::from_rotation_y(rig.target_yaw);
-                // Snap character rotation faster for responsiveness
-                player_t.rotation = player_t.rotation.slerp(target_player_rot, dt * 25.0);
-            }
+            // Right-click also turns the character
+            let target_player_rot = Quat::from_rotation_y(rig.target_yaw);
+            player_t.rotation = player_t.rotation.slerp(target_player_rot, dt * 25.0);
         }
+    } else {
+        // Clear mouse motion when not rotating to prevent drift
+        mouse_motion.clear();
     }
     
     // 3. SMOOTH ANGLE UPDATES
