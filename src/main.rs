@@ -848,6 +848,43 @@ struct SelectionState {
     selected_entities: Vec<Entity>,
 }
 
+// --- WEB3 INTEGRATION ---
+
+#[derive(Resource, Default)]
+struct WalletState {
+    connected: bool,
+    address: Option<String>,
+    hxgme_balance: f64,
+    last_update: f64,
+}
+
+#[derive(Resource)]
+struct TokenBuffs {
+    damage_multiplier: f32,
+    scrap_multiplier: f32,
+    spawn_rate_bonus: f32,
+    tier: BuffTier,
+}
+
+impl Default for TokenBuffs {
+    fn default() -> Self {
+        Self {
+            damage_multiplier: 1.0,
+            scrap_multiplier: 1.0,
+            spawn_rate_bonus: 1.0,
+            tier: BuffTier::Free,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BuffTier {
+    Free,           // 0 HXGME
+    Commander,      // 1K+ HXGME
+    Whale,          // 10K+ HXGME
+    MegaWhale,      // 100K+ HXGME
+}
+
 #[derive(Resource)]
 struct PhaseManager {
     timer: Timer,
@@ -1202,6 +1239,8 @@ fn main() {
             is_combat: false 
         })
         .insert_resource(ClearColor(Color::BLACK))
+        .init_resource::<WalletState>()
+        .init_resource::<TokenBuffs>()
         .add_systems(PreStartup, setup_assets)
         .add_systems(Startup, setup_game)
         .add_systems(Startup, (setup_lighting_only, setup_ui, setup_cursor_visuals))
@@ -1217,7 +1256,8 @@ fn main() {
             cursor_raycast_system,
             update_cursor_visual,
             update_hud,
-            auto_target_system, // Registered new system
+            auto_target_system,
+            update_token_buffs_system, // Calculate buffs from wallet balance
         ), (
             check_game_over,
             muzzle_flash_logic,
@@ -1382,7 +1422,7 @@ fn setup_lighting_only(
     // 4. DAY NIGHT TIMER
     // Use 60.0 to start at noon (middle of 120s cycle)
     let mut timer = Timer::from_seconds(120.0, TimerMode::Repeating);
-    timer.set_elapsed(std::time::Duration::from_f32(60.0));
+    timer.set_elapsed(std::time::Duration::from_secs_f32(60.0));
     commands.insert_resource(CycleTimer(timer));
 }
 
@@ -2110,10 +2150,12 @@ fn worker_logistics_ai(
     }
 }
 
-fn drill_production(time: Res<Time>, mut drills: Query<&mut Drill>) {
+fn drill_production(time: Res<Time>, mut drills: Query<&mut Drill>, buffs: Res<TokenBuffs>) {
     for mut d in drills.iter_mut() {
         if d.storage < DRILL_CAPACITY {
-            d.timer.tick(time.delta());
+            // Apply scrap multiplier to production rate
+            let boosted_delta = time.delta().mul_f32(buffs.scrap_multiplier);
+            d.timer.tick(boosted_delta);
             if d.timer.just_finished() {
                 d.storage += 1;
             }
@@ -2665,6 +2707,7 @@ fn weapon_mechanics(
     keys: Res<ButtonInput<KeyCode>>,
     sel: Res<SelectionState>,
     mobile: Res<mobile_controls::MobileInput>,
+    buffs: Res<TokenBuffs>, // Web3 integration
 ) {
     if keys.pressed(KeyCode::AltLeft) || sel.is_selecting { return; }
 
@@ -2695,7 +2738,11 @@ fn weapon_mechanics(
                     ..default() 
                 })),
                 Transform::from_translation(spawn_pos),
-                Projectile { damage: 35.0, lifetime: Timer::from_seconds(2.0, TimerMode::Once), from_player: true },
+                Projectile { 
+                    damage: 35.0 * buffs.damage_multiplier, // Apply token buff
+                    lifetime: Timer::from_seconds(2.0, TimerMode::Once), 
+                    from_player: true 
+                },
                 RigidBody::Dynamic, Collider::ball(0.15), Sensor,
                 Velocity { linvel: dir * 150.0, angvel: Vec3::ZERO },
             ));
@@ -3035,6 +3082,38 @@ fn phase_logic(
 
         if let Ok(mut l) = lights.get_single_mut() { l.color = l_col; }
         ambient.color = a_col;
+    }
+}
+
+
+// --- WEB3 SYSTEMS ---
+
+fn update_token_buffs_system(
+    wallet: Res<WalletState>,
+    mut buffs: ResMut<TokenBuffs>,
+) {
+    let balance = wallet.hxgme_balance;
+    
+    // Determine tier and apply multipliers
+    let (tier, dmg_mult, scrap_mult, spawn_bonus) = if balance >= 100000.0 {
+        (BuffTier::MegaWhale, 1.5, 2.0, 2.0)
+    } else if balance >= 10000.0 {
+        (BuffTier::Whale, 1.25, 1.5, 1.5)
+    } else if balance >= 1000.0 {
+        (BuffTier::Commander, 1.1, 1.2, 1.0)
+    } else {
+        (BuffTier::Free, 1.0, 1.0, 1.0)
+    };
+    
+    // Only update if tier changed (avoid unnecessary updates)
+    if buffs.tier != tier {
+        buffs.tier = tier;
+        buffs.damage_multiplier = dmg_mult;
+        buffs.scrap_multiplier = scrap_mult;
+        buffs.spawn_rate_bonus = spawn_bonus;
+        
+        info!("Token buffs updated: {:?} - DMG: {}x, SCRAP: {}x, SPAWN: {}x", 
+              tier, dmg_mult, scrap_mult, spawn_bonus);
     }
 }
 

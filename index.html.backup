@@ -238,7 +238,6 @@
         <button id="start-btn" class="cmd-btn">ENGAGE SYSTEM</button>
     </div>
 
-
     <!-- Scripts -->
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.js"></script>
 
@@ -262,49 +261,19 @@
         let walletAddress = null;
         let hxgmeBalance = 0;
         let wasmBlobUrl = null;
-        let connectedWalletType = null; // 'phantom' or 'jupiter'
 
-        // Multi-Wallet Detection
-        function detectWallets() {
-            const wallets = {
-                phantom: window.solana?.isPhantom,
-                jupiter: window.jupiter?.isJupiter
-            };
-            return wallets;
-        }
-
-        // Unified Wallet Connection
+        // Phantom Wallet Integration
         async function connectWallet() {
             try {
-                const wallets = detectWallets();
+                const { solana } = window;
                 
-                // Check if any wallet is available
-                if (!wallets.phantom && !wallets.jupiter) {
+                if (!solana || !solana.isPhantom) {
                     walletStatus.style.display = 'block';
-                    walletStatus.innerHTML = `
-                        ⚠️ No Solana wallet detected. Install one to continue:<br>
-                        <a href="https://phantom.app" target="_blank" style="color: var(--purple); margin-right: 10px;">📱 Phantom</a>
-                        <a href="https://jup.ag/swap" target="_blank" style="color: var(--purple);">🪐 Jupiter</a>
-                    `;
+                    walletStatus.innerHTML = '⚠️ Phantom Wallet not detected. <a href="https://phantom.app" target="_blank" style="color: var(--purple);">Install here</a>';
                     return;
                 }
 
-                let provider = null;
-                let walletName = '';
-
-                // Prefer Phantom if both are available, otherwise use whichever is present
-                if (wallets.phantom) {
-                    provider = window.solana;
-                    walletName = 'Phantom';
-                    connectedWalletType = 'phantom';
-                } else if (wallets.jupiter) {
-                    provider = window.jupiter;
-                    walletName = 'Jupiter';
-                    connectedWalletType = 'jupiter';
-                }
-
-                // Connect to the selected wallet
-                const response = await provider.connect();
+                const response = await solana.connect();
                 walletAddress = response.publicKey.toString();
                 walletConnected = true;
 
@@ -312,7 +281,7 @@
                 connectBtn.innerText = `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`;
                 connectBtn.style.background = 'linear-gradient(135deg, #64ffda, #00bfa5)';
                 walletStatus.style.display = 'block';
-                walletStatus.innerHTML = `✅ Connected via ${walletName}: ${walletAddress.slice(0, 8)}...${walletAddress.slice(-8)}`;
+                walletStatus.innerHTML = `✅ Connected: ${walletAddress.slice(0, 8)}...${walletAddress.slice(-8)}`;
 
                 // Fetch token balance (mock for now)
                 await updateTokenBalance();
@@ -335,7 +304,7 @@
         }
 
         async function updateTokenBalance() {
-            // TODO: Implement actual Solana SPL token balance check
+            // TODO: Implement actual Solana token balance check
             // For now, using mock data
             hxgmeBalance = Math.floor(Math.random() * 50000); // Mock balance
             
@@ -351,8 +320,7 @@
                 window.updateWalletState({
                     connected: true,
                     address: walletAddress,
-                    balance: hxgmeBalance,
-                    walletType: connectedWalletType
+                    balance: hxgmeBalance
                 });
             }
         }
@@ -446,26 +414,316 @@
 
         // Auto-connect if already authorized
         window.addEventListener('load', async () => {
-            const wallets = detectWallets();
-            
-            // Try Phantom first
-            if (wallets.phantom && window.solana.isConnected) {
+            const { solana } = window;
+            if (solana && solana.isPhantom && solana.isConnected) {
                 await connectWallet();
-            } 
-            // Then try Jupiter
-            else if (wallets.jupiter && window.jupiter.isConnected) {
-                await connectWallet();
-            }
-            
-            // Update button text to show available wallets
-            if (wallets.phantom && wallets.jupiter) {
-                connectBtn.innerText = 'CONNECT WALLET (Phantom or Jupiter)';
-            } else if (wallets.phantom) {
-                connectBtn.innerText = 'CONNECT PHANTOM WALLET';
-            } else if (wallets.jupiter) {
-                connectBtn.innerText = 'CONNECT JUPITER WALLET';
             }
         });
+    </script>
+</body>
+</html>
+
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --neon: #00f3ff;
+            --neon-dim: rgba(0, 243, 255, 0.3);
+            --danger: #ff3333;
+            --success: #64ffda;
+            --bg: #03080a;
+            --panel: rgba(0, 20, 30, 0.9);
+        }
+
+        /* --- CORE --- */
+        html, body {
+            margin: 0; padding: 0; width: 100%; height: 100%;
+            overflow: hidden; background-color: var(--bg);
+            font-family: 'Rajdhani', sans-serif; color: white; user-select: none;
+        }
+
+        /* --- TACTICAL VISUALS --- */
+        .bg-grid {
+            position: absolute; width: 200%; height: 200%; top: -50%; left: -50%;
+            background-image: 
+                linear-gradient(var(--neon-dim) 1px, transparent 1px),
+                linear-gradient(90deg, var(--neon-dim) 1px, transparent 1px);
+            background-size: 50px 50px;
+            transform: perspective(1000px) rotateX(60deg);
+            animation: grid-move 30s linear infinite;
+            z-index: 0; opacity: 0.15;
+        }
+        @keyframes grid-move {
+            0% { transform: perspective(1000px) rotateX(60deg) translateY(0); }
+            100% { transform: perspective(1000px) rotateX(60deg) translateY(50px); }
+        }
+
+        .scanlines {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(to bottom, transparent 50%, rgba(0,0,0,0.3) 50%);
+            background-size: 100% 4px; z-index: 5000; pointer-events: none; opacity: 0.3;
+        }
+
+        canvas {
+            display: block; width: 100% !important; height: 100% !important;
+            position: absolute; top: 0; left: 0; z-index: 1; opacity: 0;
+            transition: opacity 2s ease-in;
+        }
+
+        /* --- LOADING SCREEN --- */
+        #loader {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 100; display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            background: radial-gradient(circle at center, #0a1428 0%, #000 100%);
+            transition: opacity 1s ease-out;
+        }
+
+        .glitch-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: clamp(2rem, 8vw, 4rem);
+            font-weight: 900; letter-spacing: 10px;
+            text-transform: uppercase;
+            text-shadow: 0.05em 0 0 rgba(255,0,0,.75), -0.05em -0.025em 0 rgba(0,255,0,.75), 0.025em 0.05em 0 rgba(0,0,255,.75);
+            animation: glitch 1s infinite;
+        }
+
+        @keyframes glitch {
+            0%, 14%, 100% { text-shadow: 0.05em 0 0 rgba(255,0,0,.75), -0.05em -0.025em 0 rgba(0,255,0,.75), -0.025em 0.05em 0 rgba(0,0,255,.75); }
+            15%, 49% { text-shadow: -0.05em -0.025em 0 rgba(255,0,0,.75), 0.025em 0.025em 0 rgba(0,255,0,.75), -0.05em -0.05em 0 rgba(0,0,255,.75); }
+            50%, 99% { text-shadow: 0.025em 0.05em 0 rgba(255,0,0,.75), 0.05em 0 0 rgba(0,255,0,.75), 0 -0.05em 0 rgba(0,0,255,.75); }
+        }
+
+        .loading-container { width: 350px; max-width: 80vw; margin-top: 30px; }
+        .progress-frame { border: 1px solid var(--neon); padding: 3px; background: rgba(0, 0, 0, 0.5); }
+        .progress-bar { height: 8px; width: 0%; background: var(--neon); box-shadow: 0 0 15px var(--neon); transition: width 0.2s ease-out; }
+        
+        .status-text {
+            font-family: 'Share Tech Mono', monospace; font-size: 0.75rem;
+            margin-top: 10px; color: var(--neon); text-transform: uppercase;
+            display: flex; justify-content: space-between;
+        }
+
+        /* --- BUTTONS --- */
+        .cmd-btn {
+            display: none; margin-top: 40px; padding: 15px 45px;
+            font-family: 'Orbitron', sans-serif; font-weight: 700;
+            background: transparent; color: var(--neon); border: 1px solid var(--neon);
+            cursor: pointer; transition: 0.3s;
+            clip-path: polygon(10% 0, 100% 0, 100% 70%, 90% 100%, 0 100%, 0 30%);
+        }
+        .cmd-btn:hover { background: var(--neon); color: black; box-shadow: 0 0 30px var(--neon); }
+
+        /* --- HUD --- */
+        #hud-timer {
+            position: fixed; top: 20px; right: 20px; z-index: 500;
+            font-family: 'Share Tech Mono', monospace;
+            background: rgba(0,0,0,0.8); padding: 10px 20px;
+            border-left: 4px solid var(--neon); display: none;
+            backdrop-filter: blur(5px);
+        }
+
+        /* --- MODALS --- */
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 3000; background: rgba(1, 8, 10, 0.95);
+            flex-direction: column; justify-content: center; align-items: center;
+            backdrop-filter: blur(10px);
+        }
+
+
+
+        /* --- PAYMENT CARD --- */
+        .pay-card {
+            background: var(--panel); border: 1px solid var(--danger);
+            padding: 40px; width: 480px; max-width: 90vw; text-align: center;
+            clip-path: polygon(0 0, 95% 0, 100% 5%, 100% 100%, 5% 100%, 0 95%);
+        }
+        .pay-option {
+            width: 100%; margin: 10px 0; padding: 18px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255,255,255,0.03); color: white;
+            font-family: 'Orbitron'; cursor: pointer; transition: 0.2s;
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .pay-option:hover { border-color: var(--neon); background: rgba(0, 243, 255, 0.1); }
+    </style>
+</head>
+<body>
+
+    <div class="bg-grid"></div>
+    <div class="scanlines"></div>
+
+    <div id="hud-timer">
+        LINK_STABILITY: <span id="timer-val" style="color: var(--success);">30.00</span>s
+    </div>
+
+    <!-- MAIN LOADER -->
+    <div id="loader">
+        <div class="glitch-title">SWARM DEFENSE</div>
+        <div style="color: var(--neon); letter-spacing: 5px; font-weight: 600; margin-top: 5px; font-family: 'Orbitron';">LOGISTICS COMMANDER v1.0.4</div>
+
+        <div id="load-wrapper" class="loading-container">
+            <div class="progress-frame">
+                <div id="bar" class="progress-bar"></div>
+            </div>
+            <div class="status-text">
+                <span id="status">Syncing Neural Link...</span>
+                <span id="percent">0%</span>
+            </div>
+        </div>
+
+        <button id="start-btn" class="cmd-btn">ENGAGE SYSTEM</button>
+    </div>
+
+
+
+    <!-- PAYWALL MODAL -->
+    <div id="payment-modal" class="modal-overlay">
+        <div class="pay-card">
+            <h1 class="glitch-title" style="font-size: 1.8rem; color: var(--danger); letter-spacing: 4px;">UPLINK DISCONNECTED</h1>
+            <p style="color: #aaa; margin-bottom: 30px; font-family: 'Share Tech Mono';">Trial period expired. Maintain High Command connection to continue.</p>
+            
+            <button id="pay-card-btn" class="pay-option">
+                <span>CREDIT CARD</span>
+                <small>$4.99 / MO</small>
+            </button>
+            <button id="pay-sol-btn" class="pay-option" style="border-color: #9945FF;">
+                <span>SOLANA</span>
+                <small>0.1 SOL</small>
+            </button>
+            <button id="pay-eth-btn" class="pay-option" style="border-color: #627EEA;">
+                <span>ETHEREUM</span>
+                <small>0.01 ETH</small>
+            </button>
+            <button id="skip-payment-btn" class="pay-option" style="border-color: #666; margin-top: 20px;" onclick="closePaymentModal()">
+                <span>SKIP FOR NOW</span>
+                <small>Continue Trial</small>
+            </button>
+            <div id="pay-status" style="margin-top:20px; font-family: 'Share Tech Mono'; color: var(--neon);"></div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
+
+    <script type="module">
+        import init from './farm-blazer.js';
+        const WASM_PATH = './farm-blazer.wasm';
+
+        const bar = document.getElementById('bar');
+        const percentTxt = document.getElementById('percent');
+        const statusTxt = document.getElementById('status');
+        const startBtn = document.getElementById('start-btn');
+        const loader = document.getElementById('loader');
+        const hud = document.getElementById('hud-timer');
+        const payModal = document.getElementById('payment-modal');
+
+        let wasmBlobUrl = null;
+
+        // 1. Download with Tracking
+        async function runLoader() {
+            try {
+                const response = await fetch(WASM_PATH);
+                if (!response.ok) throw new Error();
+
+                const total = parseInt(response.headers.get('Content-Length'), 10);
+                let loaded = 0;
+                const reader = response.body.getReader();
+                const chunks = [];
+
+                while(true) {
+                    const {done, value} = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                    loaded += value.length;
+                    
+                    if (total) {
+                        const p = Math.round((loaded / total) * 100);
+                        bar.style.width = p + '%';
+                        percentTxt.innerText = p + '%';
+                        statusTxt.innerText = `Downloading Data Vectors...`;
+                    }
+                }
+
+                wasmBlobUrl = URL.createObjectURL(new Blob(chunks, { type: 'application/wasm' }));
+                statusTxt.innerText = "System Ready";
+                startBtn.style.display = 'block';
+                document.getElementById('load-wrapper').style.opacity = '0.4';
+
+            } catch (e) {
+                statusTxt.innerText = "CONNECTION FAILURE";
+                statusTxt.style.color = "red";
+            }
+        }
+
+        // 2. Boot Game
+        async function boot() {
+            startBtn.innerText = "INITIALIZING CORE...";
+            startBtn.disabled = true;
+
+            try {
+                try {
+                    await init(wasmBlobUrl);
+                } catch (e) {
+                    // Ignore Bevy control flow exception
+                    if (!e.message || e.message.indexOf('exceptions for control flow') === -1) throw e;
+                }
+
+                URL.revokeObjectURL(wasmBlobUrl);
+                loader.style.opacity = '0';
+                
+                setTimeout(() => {
+                    loader.remove();
+                    hud.style.display = 'block';
+                    startTrial();
+                    
+                    // Reveal Game
+                    const canvas = document.querySelector('canvas');
+                    if(canvas) { canvas.style.opacity = '1'; canvas.focus(); }
+                }, 1000);
+
+            } catch (err) {
+                console.error(err);
+                startBtn.innerText = "BOOT ERROR";
+            }
+        }
+
+        // 3. Trial Timer
+        function startTrial() {
+            let timeLeft = 30.0;
+            const timerVal = document.getElementById('timer-val');
+            
+            const interval = setInterval(() => {
+                timeLeft -= 0.01;
+                timerVal.innerText = timeLeft.toFixed(2);
+                
+                if (timeLeft <= 10) timerVal.style.color = "var(--danger)";
+
+                if (timeLeft <= 0) {
+                    clearInterval(interval);
+                    timerVal.innerText = "0.00";
+                    payModal.style.display = 'flex';
+                    const canvas = document.querySelector('canvas');
+                    if(canvas) canvas.style.filter = "grayscale(1) blur(5px)";
+                }
+            }, 10);
+        }
+
+        // 4. Modal Helpers
+        window.closePaymentModal = () => {
+            payModal.style.display = 'none';
+            const canvas = document.querySelector('canvas');
+            if(canvas) canvas.style.filter = "none";
+        }
+
+        startBtn.onclick = boot;
+        runLoader();
     </script>
 </body>
 </html>
