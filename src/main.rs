@@ -1,17 +1,17 @@
 use bevy::input::mouse::{MouseMotion, MouseWheel};
-use bevy::pbr::{NotShadowCaster, MaterialPlugin};
+use bevy::pbr::NotShadowCaster;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_rapier3d::prelude::*;
 use std::f32::consts::PI;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::core_pipeline::bloom::Bloom;
-use bevy::render::render_resource::{AddressMode, AsBindGroup, ShaderRef, SamplerDescriptor};
+use bevy::render::render_resource::{AddressMode, SamplerDescriptor};
 use bevy::image::{ImageSampler, ImageSamplerDescriptor};
-use bevy::reflect::TypePath;
 use bevy::utils::HashMap;
 use rand::prelude::*;
 use bevy::asset::AssetMetaCheck;
+use bevy::render::mesh::SphereKind;
 
 mod mobile_controls;
 mod noise;
@@ -233,10 +233,13 @@ fn update_hex_map(
     mut commands: Commands,
     mut grid: ResMut<HexGridState>,
     asset_server: Res<AssetServer>,
-    player_q: Query<&Transform, With<crate::Player>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    assets: Res<GameAssets>,
+    player_q: Query<(&Transform, &Velocity), With<crate::Player>>,
     settings: Res<WorldSettings>,
 ) {
-    let Ok(player_t) = player_q.get_single() else { return };
+    let Ok((player_t, _)) = player_q.get_single() else { return };
 
     let q = ((f32::sqrt(3.0) / 3.0 * player_t.translation.x - 1.0 / 3.0 * player_t.translation.z) / settings.hex_size).round() as i32;
     let r = ((2.0 / 3.0 * player_t.translation.z) / settings.hex_size).round() as i32;
@@ -266,7 +269,8 @@ fn update_hex_map(
                     &mut commands, 
                     neighbor_q, 
                     neighbor_r, 
-                    &asset_server, 
+                    &asset_server,
+                    &assets,
                     &mut grid,
                     &settings,
                 );
@@ -307,7 +311,8 @@ fn spawn_hex(
     commands: &mut Commands,
     q: i32,
     r: i32,
-    assets: &AssetServer,
+    asset_server: &AssetServer,
+    assets: &GameAssets,
     grid: &mut HexGridState,
     settings: &WorldSettings,
 ) {
@@ -319,8 +324,8 @@ fn spawn_hex(
     let mut rng = rand::thread_rng();
 
     // surface_y hides the bottom half of the hexes for a clean grid look
-    // Adjusted to 0.0 to bring grid UP to village level (Everything above hex)
-    let surface_y = 0.0;
+    // Adjusted to -45.0 to bring top of hex (scale 90, height 1) to y=0
+    let surface_y = -45.0;
     let mut scale_vec = Vec3::splat(settings.tile_scale);
 
     let mut base_glb = "grass.glb";
@@ -402,7 +407,7 @@ fn spawn_hex(
         TileType::Archery => feature_glb = Some("building-archery.glb".into()),
         TileType::Mine => {
             feature_glb = Some("building-mine.glb".into());
-            spawn_sub_layer(commands, assets, "building-mine.glb", pos, 0.0, 0.0, scale_vec); // Using helper just to prove it works, logically redundant but fulfills request
+            spawn_sub_layer(commands, asset_server, "building-mine.glb", pos, 0.0, 0.0, scale_vec); 
         },
         TileType::Smelter => {
             feature_glb = Some("building-smelter.glb".into());
@@ -472,7 +477,25 @@ fn spawn_hex(
         TileType::SandRocks => {
              feature_glb = Some("sand-rocks.glb".into());
              rotation_y = rng.gen_range(0.0..PI * 2.0);
-        }, 
+        },
+        TileType::Grass => {
+            // Spawn lush green thick grass on grass hexes - Dense & Optimized
+            for i in 0..36 {
+                let rx = rng.gen_range(-settings.hex_size*0.42..settings.hex_size*0.42);
+                let rz = rng.gen_range(-settings.hex_size*0.42..settings.hex_size*0.42);
+                
+                // Use shared mesh and materials for GPU instancing
+                let mat = if i % 2 == 0 { assets.grass_mat_1.clone() } else { assets.grass_mat_2.clone() };
+                
+                commands.spawn((
+                    Mesh3d(assets.grass_mesh.clone()),
+                    MeshMaterial3d(mat),
+                    Transform::from_xyz(x + rx, 0.05, z + rz) // Sit exactly at y=0 surface
+                        .with_rotation(Quat::from_rotation_y(rng.gen_range(0.0..PI))),
+                    Foliage,
+                ));
+            }
+        },
         _ => {}
     }
 
@@ -484,7 +507,7 @@ fn spawn_hex(
 
     // Spawn Base Ground (The Grid)
     commands.spawn((
-        SceneRoot(assets.load(format!("{}#Scene0", base_glb))),
+        SceneRoot(asset_server.load(format!("{}#Scene0", base_glb))),
         Transform::from_xyz(0.0, surface_y + (if base_glb == "water.glb" { -2.5 } else { 0.0 }), 0.0)
             .with_scale(scale_vec),
     )).set_parent(parent_id);
@@ -501,7 +524,7 @@ fn spawn_hex(
             let collider_radius = if is_ship { 1.5 } else { 0.5 };
             
             commands.spawn((
-                SceneRoot(assets.load(format!("{}#Scene0", glb))),
+                SceneRoot(asset_server.load(format!("{}#Scene0", glb))),
                 Transform::from_translation(spawn_pos)
                     .with_rotation(Quat::from_rotation_y(rotation_y))
                     .with_scale(scale_vec),
@@ -528,7 +551,7 @@ fn spawn_hex(
         } else {
             // Standard Static Feature
             commands.spawn((
-                SceneRoot(assets.load(format!("{}#Scene0", glb))),
+                SceneRoot(asset_server.load(format!("{}#Scene0", glb))),
                 Transform::from_xyz(0.0, y_offset, 0.0)
                     .with_rotation(Quat::from_rotation_y(rotation_y))
                     .with_scale(scale_vec),
@@ -540,9 +563,9 @@ fn spawn_hex(
 }
 
 // Helper for complex multi-model tiles (like Mine on Mountain)
-fn spawn_sub_layer(cmds: &mut Commands, assets: &AssetServer, glb: &str, pos: Vec3, y: f32, rot: f32, scale: Vec3) {
+fn spawn_sub_layer(cmds: &mut Commands, asset_server: &AssetServer, glb: &str, pos: Vec3, y: f32, rot: f32, scale: Vec3) {
     cmds.spawn((
-        SceneRoot(assets.load(format!("{}#Scene0", glb))),
+        SceneRoot(asset_server.load(format!("{}#Scene0", glb))),
         Transform::from_translation(pos + Vec3::Y * y)
             .with_rotation(Quat::from_rotation_y(rot))
             .with_scale(scale),
@@ -550,9 +573,9 @@ fn spawn_sub_layer(cmds: &mut Commands, assets: &AssetServer, glb: &str, pos: Ve
 }
 
 // Helper to spawn the overlay assets (Rivers/Paths)
-fn spawn_custom_model(commands: &mut Commands, assets: &AssetServer, path: &str, world_pos: Vec3, y: f32, rot: f32, scale: f32) {
+fn spawn_custom_model(commands: &mut Commands, asset_server: &AssetServer, path: &str, world_pos: Vec3, y: f32, rot: f32, scale: f32) {
     commands.spawn((
-        SceneRoot(assets.load(format!("{}#Scene0", path))),
+        SceneRoot(asset_server.load(format!("{}#Scene0", path))),
         Transform::from_translation(world_pos + Vec3::Y * y)
             .with_rotation(Quat::from_rotation_y(rot))
             .with_scale(Vec3::splat(scale)),
@@ -937,6 +960,9 @@ impl SpatialHash {
 #[derive(Resource)]
 struct GameAssets {
     debug_tex: Handle<Image>,
+    grass_mesh: Handle<Mesh>,
+    grass_mat_1: Handle<StandardMaterial>,
+    grass_mat_2: Handle<StandardMaterial>,
 }
 
 // --- COMPONENTS ---
@@ -1105,14 +1131,14 @@ impl Default for WowCameraRig {
             pitch: PI / 3.0,
             target_yaw: 0.0, 
             target_pitch: PI / 3.0,
-            min_pitch: 0.01,        // Straight down
+            min_pitch: 0.05, 
             max_pitch: PI / 2.1,
-            min_dist: 20.0, 
-            max_dist: 2000.0,      // Massive pull back
-            zoom_sens: 50.0,       // Fast zoom
+            min_dist: 15.0, 
+            max_dist: 500.0, 
+            zoom_sens: 20.0, 
             rot_sens: 0.003,
-            radius: 1000.0,        // Start very high
-            goal_radius: 1000.0, 
+            radius: 80.0, 
+            goal_radius: 80.0, 
             is_user_controlling: false,
         }
     }
@@ -1167,48 +1193,19 @@ struct Bob {
     pub offset: f32,
 }
 
+// --- SKY ---
+
 #[derive(Component)]
 struct SkySphere;
+
+#[derive(Component)]
+struct Foliage;
 
 #[derive(Component)]
 struct FancyCursorVisual;
 
 #[derive(Component)]
 struct HudText;
-
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
-pub struct SkyMaterial {
-    #[uniform(0)]
-    pub sun_position: Vec3,
-    #[uniform(0)]
-    pub turbidity: f32,
-    #[uniform(0)]
-    pub rayleigh: f32,
-    #[uniform(0)]
-    pub mie_coefficient: f32,
-    #[uniform(0)]
-    pub mie_directional_g: f32,
-}
-
-impl Material for SkyMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/sky.wgsl".into()
-    }
-
-    fn vertex_shader() -> ShaderRef {
-        "shaders/sky.wgsl".into()
-    }
-
-    fn specialize(
-        _pipeline: &bevy::pbr::MaterialPipeline<Self>,
-        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
-        _layout: &bevy::render::mesh::MeshVertexBufferLayoutRef,
-        _key: bevy::pbr::MaterialPipelineKey<Self>,
-    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
-        descriptor.primitive.cull_mode = None;
-        Ok(())
-    }
-}
 
 // --- MAIN ---
 
@@ -1238,7 +1235,6 @@ fn main() {
                     default_sampler: ImageSamplerDescriptor::linear(),
                 })
         )
-        .add_plugins(MaterialPlugin::<SkyMaterial>::default())
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default())
         .add_plugins(mobile_controls::MobileControlsPlugin)
         // FrameTimeDiagnosticsPlugin, // Uncomment for FPS
@@ -1275,6 +1271,7 @@ fn main() {
             update_hud,
             auto_target_system,
             update_token_buffs_system, // Calculate buffs from wallet balance
+            foliage_billboard_system,
         ), (
             check_game_over,
             muzzle_flash_logic,
@@ -1335,7 +1332,13 @@ fn bob_system(time: Res<Time>, mut q: Query<(&mut Transform, &Bob), With<RigidBo
     }
 }
 
-fn setup_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
+fn setup_assets(
+    mut commands: Commands, 
+    mut images: ResMut<Assets<Image>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
+) {
     const SIZE: usize = 64;
     let mut data = vec![255u8; SIZE * SIZE * 4];
     for y in 0..SIZE {
@@ -1358,13 +1361,44 @@ fn setup_assets(mut commands: Commands, mut images: ResMut<Assets<Image>>) {
         bevy::render::render_asset::RenderAssetUsages::MAIN_WORLD | 
         bevy::render::render_asset::RenderAssetUsages::RENDER_WORLD,
     );
-    image.sampler = ImageSampler::Descriptor(SamplerDescriptor {
-        address_mode_u: AddressMode::Repeat,
-        address_mode_v: AddressMode::Repeat,
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: AddressMode::Repeat.into(),
+        address_mode_v: AddressMode::Repeat.into(),
         ..default()
-    }.into());
+    });
     let debug_tex = images.add(image);
-    commands.insert_resource(GameAssets { debug_tex });
+
+    // 2. Initialize Shared Grass Assets
+    let grass_mesh = meshes.add(Plane3d::default().mesh().size(3.0, 3.0).normal(Dir3::Z));
+    
+    // Mat 1 (Lush Clover)
+    let grass_mat_1 = materials.add(StandardMaterial {
+        base_color_texture: Some(asset_server.load("folliage-shaded/sprite_0055.png")),
+        base_color: Color::srgb(0.2, 0.9, 0.1),
+        alpha_mode: AlphaMode::Mask(0.5),
+        perceptual_roughness: 1.0,
+        unlit: true,
+        cull_mode: None,
+        ..default()
+    });
+
+    // Mat 2 (Lush Thick Grass)
+    let grass_mat_2 = materials.add(StandardMaterial {
+        base_color_texture: Some(asset_server.load("folliage-shaded/sprite_0085.png")),
+        base_color: Color::srgb(0.15, 0.8, 0.05),
+        alpha_mode: AlphaMode::Mask(0.5),
+        perceptual_roughness: 1.0,
+        unlit: true,
+        cull_mode: None,
+        ..default()
+    });
+
+    commands.insert_resource(GameAssets { 
+        debug_tex,
+        grass_mesh,
+        grass_mat_1,
+        grass_mat_2,
+    });
 }
 
 // --- SETUP & ENV ---
@@ -1379,8 +1413,7 @@ fn setup_lighting_only(
     mut commands: Commands,
     _asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
-    _materials: ResMut<Assets<StandardMaterial>>,
-    mut sky_materials: ResMut<Assets<SkyMaterial>>,
+    mut _materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Camera
     commands.spawn((
@@ -1400,19 +1433,16 @@ fn setup_lighting_only(
         Transform::from_xyz(0.0, 150.0, 150.0),
     ));
 
-    // 1. SKY SPHERE
-    let sky_material = sky_materials.add(SkyMaterial {
-        sun_position: Vec3::new(0.0, 100.0, 0.0),
-        turbidity: 10.0,
-        rayleigh: 2.0,
-        mie_coefficient: 0.005,
-        mie_directional_g: 0.8,
-    });
-    
+    // 1. SKY SPHERE (Toon Sky)
     commands.spawn((
-        Mesh3d(meshes.add(Mesh::from(Sphere::default().mesh().ico(5).unwrap()))),
-        MeshMaterial3d(sky_material),
-        Transform::from_scale(Vec3::splat(4500.0)),
+        Mesh3d(meshes.add(Sphere::new(4500.0).mesh().kind(SphereKind::Uv { sectors: 72, stacks: 36 }))),
+        MeshMaterial3d(_materials.add(StandardMaterial {
+            base_color_texture: Some(_asset_server.load("toon-sky.jpg")),
+            unlit: true,
+            cull_mode: None, // See from inside
+            ..default()
+        })),
+        Transform::from_xyz(0.0, 0.0, 0.0).with_scale(Vec3::new(1.0, 0.832, 1.0)),
         SkySphere,
         NotShadowCaster,
     ));
@@ -1441,19 +1471,26 @@ fn setup_lighting_only(
     let mut timer = Timer::from_seconds(120.0, TimerMode::Repeating);
     timer.set_elapsed(std::time::Duration::from_secs_f32(60.0));
     commands.insert_resource(CycleTimer(timer));
+
 }
 
-#[allow(dead_code)]
+fn sky_sphere_follow_system(
+    mut q_sky: Query<&mut Transform, With<SkySphere>>,
+    q_cam: Query<&Transform, (With<Camera>, Without<SkySphere>)>,
+) {
+    if let Ok(cam_t) = q_cam.get_single() {
+        if let Ok(mut sky_t) = q_sky.get_single_mut() {
+            sky_t.translation = cam_t.translation;
+        }
+    }
+}
+
 fn day_night_cycle(
-    time: Res<Time>,
+    _time: Res<Time>,
     mut timer: ResMut<CycleTimer>,
-    mut sky_mat_query: Query<&mut MeshMaterial3d<SkyMaterial>>,
-    mut sky_materials: ResMut<Assets<SkyMaterial>>,
     mut sun_query: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
     mut ambient: ResMut<AmbientLight>,
 ) {
-    // timer.0.tick(time.delta()); // FREEZE TIME
-    
     // Force Noon
     timer.0.set_elapsed(std::time::Duration::from_secs_f32(60.0));
 
@@ -1465,13 +1502,6 @@ fn day_night_cycle(
     // Calculate Sun Position
     let sun_pos = Vec3::new(0.0, angle.sin(), angle.cos()) * 1000.0;
     let sun_dir = sun_pos.normalize();
-
-    // Update Sky Material
-    for handle in sky_mat_query.iter_mut() {
-        if let Some(mat) = sky_materials.get_mut(&handle.0) {
-            mat.sun_position = sun_pos;
-        }
-    }
 
     // Update Directional Light
     if let Ok((mut trans, mut light)) = sun_query.get_single_mut() {
@@ -1497,15 +1527,15 @@ fn day_night_cycle(
     }
 }
 
-#[allow(dead_code)]
-fn sky_sphere_follow_system(
-    mut q_sky: Query<&mut Transform, With<SkySphere>>,
-    q_cam: Query<&Transform, (With<Camera>, Without<SkySphere>)>,
+fn foliage_billboard_system(
+    camera_q: Query<&Transform, With<WowCameraRig>>,
+    mut foliage_q: Query<&mut Transform, (With<Foliage>, Without<WowCameraRig>)>,
 ) {
-    if let Ok(cam_t) = q_cam.get_single() {
-        if let Ok(mut sky_t) = q_sky.get_single_mut() {
-            sky_t.translation = cam_t.translation;
-        }
+    let Ok(camera_transform) = camera_q.get_single() else { return };
+    for mut transform in foliage_q.iter_mut() {
+        let mut target = camera_transform.translation;
+        target.y = transform.translation.y;
+        transform.look_at(target, Vec3::Y);
     }
 }
 
@@ -1516,6 +1546,7 @@ fn setup_game(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     assets: Res<GameAssets>,
+    _asset_server: Res<AssetServer>,
 ) {
     // 1. Initialize HexGridState
     let grid = HexGridState {
@@ -1560,7 +1591,7 @@ fn setup_game(
     // 3. Calc World Pos
     let x = settings.hex_size * f32::sqrt(3.0) * (center_q as f32 + center_r as f32 / 2.0);
     let z = settings.hex_size * 3.0 / 2.0 * center_r as f32;
-    let spawn_pos = Vec3::new(x, 40.0, z); // High up to drop in
+    let spawn_pos = Vec3::new(x, 0.0, z); // Start at surface
 
     // 4. Spawn Player
     setup_player(&mut commands, &mut meshes, &mut materials, &assets, spawn_pos);
@@ -1620,11 +1651,11 @@ fn setup_starting_village(
     // We should put them at Y=4.0 (half height of 8.0 box) roughly.
     // But relative to the center hex.
 
-    // 1. Storage Bin (The Hub)
+    // 1. Storage Bin (The Hub) SIT ON GROUND
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(12.0, 8.0, 12.0))),
         MeshMaterial3d(storage_mat),
-        Transform::from_translation(center + Vec3::new(0.0, 4.0, 0.0)),
+        Transform::from_translation(center.with_y(4.0)), // Sit on ground (y=0 is surface)
         StorageBin, Structure, Health { current: 2000.0, max: 2000.0 },
         RigidBody::Fixed, Collider::cuboid(6.0, 4.0, 6.0),
     ));
@@ -1633,7 +1664,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(8.0, 8.0, 8.0))),
         MeshMaterial3d(hut_mat),
-        Transform::from_translation(center + Vec3::new(-25.0, 4.0, -25.0)),
+        Transform::from_translation(center.with_y(4.0) + Vec3::new(-25.0, 0.0, -25.0)),
         BuilderHut { spawn_timer: Timer::from_seconds(5.0, TimerMode::Repeating), worker_count: 0, max_workers: 4 },
         Structure, Health { current: 1000.0, max: 1000.0 },
         RigidBody::Fixed, Collider::cuboid(4.0, 4.0, 4.0),
@@ -1643,7 +1674,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(15.0, 10.0, 15.0))),
         MeshMaterial3d(barracks_mat),
-        Transform::from_translation(center + Vec3::new(25.0, 5.0, -25.0)),
+        Transform::from_translation(center.with_y(5.0) + Vec3::new(25.0, 0.0, -25.0)),
         Barracks { timer: Timer::from_seconds(10.0, TimerMode::Repeating), spawn_drone_next: true },
         Structure, Health { current: 1500.0, max: 1500.0 },
         RigidBody::Fixed, Collider::cuboid(7.5, 5.0, 7.5),
@@ -1654,7 +1685,7 @@ fn setup_starting_village(
         commands.spawn((
             Mesh3d(meshes.add(Cylinder::new(4.0, 8.0))),
             MeshMaterial3d(drill_mat.clone()),
-            Transform::from_translation(center + offset + Vec3::new(0.0, 4.0, 0.0)),
+            Transform::from_translation(center.with_y(4.0) + offset),
             Drill { timer: Timer::from_seconds(4.0, TimerMode::Repeating), storage: 0 },
             Structure, Health { current: 600.0, max: 600.0 },
             RigidBody::Fixed, Collider::cylinder(4.0, 4.0),
@@ -1773,15 +1804,15 @@ fn wow_camera_system(
     mut mouse_wheel: EventReader<MouseWheel>,
     mouse_btn: Res<ButtonInput<MouseButton>>,
     _keys: Res<ButtonInput<KeyCode>>,
-    mut q_win: Query<&mut Window, With<PrimaryWindow>>,
     mut q_cam: Query<(&mut Transform, &mut WowCameraRig)>,
-    mut q_player: Query<(&mut Transform, &GlobalTransform), (With<Player>, Without<WowCameraRig>)>,
+    mut q_player: Query<(&mut Transform, &Velocity), (With<Player>, Without<WowCameraRig>)>,
     rapier: Single<&RapierContext>,
     time: Res<Time>,
 ) {
-    let Ok(_window) = q_win.get_single_mut() else { return };
     let Ok((mut cam_t, mut rig)) = q_cam.get_single_mut() else { return };
     let dt = time.delta_secs();
+    
+    let Ok((mut player_t, player_v)) = q_player.get_single_mut() else { return };
     
     // Toggle user control with 'C'
     if _keys.just_pressed(KeyCode::KeyC) {
@@ -1789,21 +1820,21 @@ fn wow_camera_system(
         info!("Camera User Control: {}", rig.is_user_controlling);
     }
     
-    let Ok((mut player_t, player_gt)) = q_player.get_single_mut() else { return };
-    
-    // If not user controlling, follow player's rotation
-    if !rig.is_user_controlling {
-        let player_yaw = player_gt.compute_transform().rotation.to_euler(EulerRot::YXZ).0;
-        // Smoothly lerp camera target yaw to player's yaw
-        rig.target_yaw = rig.target_yaw.lerp(player_yaw, dt * 5.0);
-    }
-    
-    
     const DEADZONE: f32 = 0.001;
     const CONVERGENCE_THRESHOLD: f32 = 0.0001;
     
     let right_click = mouse_btn.pressed(MouseButton::Right);
     let _left_click = mouse_btn.pressed(MouseButton::Left);
+
+    // If not user controlling AND moving, eventually follow player's rotation
+    // But skip if Right-Clicking!
+    if !rig.is_user_controlling && !right_click {
+        let player_yaw = player_t.rotation.to_euler(EulerRot::YXZ).0;
+        // Only follow if the player is actually moving (has some velocity)
+        if player_v.linvel.length() > 0.1 {
+             rig.target_yaw = rig.target_yaw.lerp(player_yaw, dt * 2.0);
+        }
+    }
     
     // 1. ZOOM LOGIC
     for ev in mouse_wheel.read() {
@@ -2720,9 +2751,12 @@ fn wow_movement_system(
 
             // If moving and NOT right-clicking, face movement direction (Keyboard Turn / Free Run)
             if !right_click_held {
-                let target_angle = move_dir.x.atan2(move_dir.z) + PI;
-                let target_rot = Quat::from_rotation_y(target_angle);
-                transform.rotation = transform.rotation.slerp(target_rot, dt * 10.0);
+                let mut move_dir_no_y = move_dir;
+                move_dir_no_y.y = 0.0;
+                if move_dir_no_y.length_squared() > 1e-6 {
+                    let target_rot = Quat::from_rotation_arc(Vec3::NEG_Z, move_dir_no_y.normalize());
+                    transform.rotation = transform.rotation.slerp(target_rot, dt * 10.0);
+                }
             }
         }
 
@@ -3185,19 +3219,32 @@ fn update_hud(
     mut txt: Query<&mut Text, With<HudText>>, 
     state: Res<State<GameState>>,
     settings: Res<WorldSettings>,
+    // Debug info
+    q_player: Query<&Velocity, With<Player>>,
+    q_cam: Query<&WowCameraRig>,
 ) {
     if let Ok(mut t) = txt.get_single_mut() {
         if *state.get() == GameState::GameOver {
             t.0 = "GAME OVER\nPRESS [R] TO RESTART".to_string(); return;
         }
+        
+        let velocity = q_player.get_single().map(|v| v.linvel.length()).unwrap_or(0.0);
+        let rig = q_cam.get_single();
+        
         let phase = if pm.is_combat { "COMBAT" } else { "BUILD" };
         let tool = match mgr.tool { 
             BuildTool::Drill => "Drill ($50)", BuildTool::Turret => "Turret ($80)", BuildTool::Wall => "Wall ($10)", 
             BuildTool::Barracks => "Barracks ($200)", BuildTool::BuilderHut => "Hut ($150)", BuildTool::Storage => "Storage ($100)" 
         };
+        
+        let mut debug_info = String::new();
+        if let Ok(r) = rig {
+            debug_info = format!("\n---\nArm: {:.1} | Yaw: {:.2} | Pitch: {:.2}\nSpeed: {:.1}", r.radius, r.yaw, r.pitch, velocity);
+        }
+
         t.0 = format!(
-            "{} - {:.0}s | Wave {}\nScrap: {}/{}\nUnits: {}/{}\nTool: {} [1-6]\n[Alt+Drag] Select | [T] Reset\n---\nSize: {:.2} (Up/Down) | Scale: {:.2} (Left/Right)",
-            phase, pm.timer.remaining_secs(), pm.wave, stats.scrap, stats.max_scrap, stats.unit_count, stats.unit_cap, tool, settings.hex_size, settings.tile_scale
+            "{} - {:.0}s | Wave {}\nScrap: {}/{}\nUnits: {}/{}\nTool: {} [1-6]\n[Alt+Drag] Select | [T] Reset\n---\nSize: {:.2} | Scale: {:.2}{}",
+            phase, pm.timer.remaining_secs(), pm.wave, stats.scrap, stats.max_scrap, stats.unit_count, stats.unit_cap, tool, settings.hex_size, settings.tile_scale, debug_info
         );
     }
 }
