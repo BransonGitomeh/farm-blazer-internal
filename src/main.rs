@@ -34,7 +34,7 @@ impl Default for WorldSettings {
     fn default() -> Self {
         Self {
             hex_size: 50.0, 
-            tile_scale: 50.0,  // Reduced from 86.0 for better proportions
+            tile_scale: 86.0,  // Reduced from 86.0 for better proportions
             render_distance: 35, // Increased to see the larger horizon
             island_size: 25.0,    // Doubled landmass radius (~1,800 tiles)
         }
@@ -619,22 +619,22 @@ fn world_tuner_system(
     let size_step = 0.5; 
     let scale_step = 0.5;
     
-    // Use Shift for rapid changes, otherwise single clicks
-    let rapid = keys.pressed(KeyCode::ShiftLeft);
+    // Use Shift for rapid changes - DISABLED for safety on heavy rebuilds
+    // let rapid = keys.pressed(KeyCode::ShiftLeft);
 
     // Adjust Grid Spacing (Hex Size)
-    if (rapid && keys.pressed(KeyCode::ArrowUp)) || keys.just_pressed(KeyCode::ArrowUp) { 
+    if keys.just_pressed(KeyCode::ArrowUp) { 
         settings.hex_size += size_step; changed = true; 
     }
-    if (rapid && keys.pressed(KeyCode::ArrowDown)) || keys.just_pressed(KeyCode::ArrowDown) { 
+    if keys.just_pressed(KeyCode::ArrowDown) { 
         settings.hex_size = (settings.hex_size - size_step).max(0.1); changed = true; 
     }
 
     // Adjust Model Scale
-    if (rapid && keys.pressed(KeyCode::ArrowRight)) || keys.just_pressed(KeyCode::ArrowRight) { 
+    if keys.just_pressed(KeyCode::ArrowRight) { 
         settings.tile_scale += scale_step; changed = true; 
     }
-    if (rapid && keys.pressed(KeyCode::ArrowLeft)) || keys.just_pressed(KeyCode::ArrowLeft) { 
+    if keys.just_pressed(KeyCode::ArrowLeft) { 
         settings.tile_scale = (settings.tile_scale - scale_step).max(0.1); changed = true; 
     }
 
@@ -647,10 +647,10 @@ fn world_tuner_system(
     }
 
     // Adjust Island Size (Landmass)
-    if (rapid && keys.pressed(KeyCode::Period)) || keys.just_pressed(KeyCode::Period) {
+    if keys.just_pressed(KeyCode::Period) {
         settings.island_size += 0.5; changed = true;
     }
-    if (rapid && keys.pressed(KeyCode::Comma)) || keys.just_pressed(KeyCode::Comma) {
+    if keys.just_pressed(KeyCode::Comma) {
         settings.island_size = (settings.island_size - 0.5).max(1.0); changed = true;
     }
 
@@ -1189,6 +1189,10 @@ pub struct SkyMaterial {
 
 impl Material for SkyMaterial {
     fn fragment_shader() -> ShaderRef {
+        "shaders/sky.wgsl".into()
+    }
+
+    fn vertex_shader() -> ShaderRef {
         "shaders/sky.wgsl".into()
     }
 }
