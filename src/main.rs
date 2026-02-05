@@ -33,8 +33,8 @@ struct WorldSettings {
 impl Default for WorldSettings {
     fn default() -> Self {
         Self {
-            hex_size: 50.0, 
-            tile_scale: 86.0,  // Reduced from 86.0 for better proportions
+            hex_size: 52.5, 
+            tile_scale: 90.0,  // Reduced from 86.0 for better proportions
             render_distance: 35, // Increased to see the larger horizon
             island_size: 25.0,    // Doubled landmass radius (~1,800 tiles)
         }
@@ -319,7 +319,8 @@ fn spawn_hex(
     let mut rng = rand::thread_rng();
 
     // surface_y hides the bottom half of the hexes for a clean grid look
-    let surface_y = -(settings.tile_scale * 0.18); 
+    // Adjusted to 0.0 to bring grid UP to village level (Everything above hex)
+    let surface_y = 0.0;
     let mut scale_vec = Vec3::splat(settings.tile_scale);
 
     let mut base_glb = "grass.glb";
@@ -585,7 +586,9 @@ fn apply_mesh_colliders(
             if let Some(mesh) = meshes.get(mesh_handle) {
                 let shape = bevy_rapier3d::geometry::ComputedColliderShape::TriMesh(TriMeshFlags::MERGE_DUPLICATE_VERTICES);
                 if let Some(collider) = Collider::from_bevy_mesh(mesh, &shape) {
-                    commands.entity(entity).insert(collider);
+                    if let Some(mut entity_cmds) = commands.get_entity(entity) {
+                        entity_cmds.insert(collider);
+                    }
                 }
             }
         }
@@ -1195,6 +1198,16 @@ impl Material for SkyMaterial {
     fn vertex_shader() -> ShaderRef {
         "shaders/sky.wgsl".into()
     }
+
+    fn specialize(
+        _pipeline: &bevy::pbr::MaterialPipeline<Self>,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &bevy::render::mesh::MeshVertexBufferLayoutRef,
+        _key: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None;
+        Ok(())
+    }
 }
 
 // --- MAIN ---
@@ -1439,8 +1452,11 @@ fn day_night_cycle(
     mut sun_query: Query<(&mut Transform, &mut DirectionalLight), With<Sun>>,
     mut ambient: ResMut<AmbientLight>,
 ) {
-    timer.0.tick(time.delta());
+    // timer.0.tick(time.delta()); // FREEZE TIME
     
+    // Force Noon
+    timer.0.set_elapsed(std::time::Duration::from_secs_f32(60.0));
+
     // 0.0 to 1.0 (0=Noon, 0.5=Midnight)
     let percent = timer.0.elapsed_secs() / timer.0.duration().as_secs_f32(); 
     // Map to angle: Noon (90 deg) -> Sunset (0 deg) -> Midnight (-90) -> Sunrise
