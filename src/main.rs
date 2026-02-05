@@ -1,5 +1,5 @@
 use bevy::input::mouse::{MouseMotion, MouseWheel};
-use bevy::pbr::NotShadowCaster;
+use bevy::pbr::{NotShadowCaster, FogSettings, FogFalloff};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_rapier3d::prelude::*;
@@ -21,31 +21,39 @@ mod noise;
 
 #[derive(Resource)]
 struct WorldSettings {
-    pub hex_size: f32,
-    pub tile_scale: f32,
+    pub hex_size: f32,      // Distance from center to corner
+    pub tile_scale: f32,    // Visual scale of the GLB model
     pub render_distance: i32,
+    pub height_step: f32,   // Visual height difference between logic levels
     pub island_size: f32,
 }
 
-// --- NEW r#genERATION LOGIC ---
-// This attempts to recreate the composition of the image (Island with a river partition)
-
 impl Default for WorldSettings {
     fn default() -> Self {
+        let scale = 50.0;
         Self {
-            hex_size: 52.5, 
-            tile_scale: 90.0,  // Reduced from 86.0 for better proportions
-            render_distance: 35, // Increased to see the larger horizon
-            island_size: 25.0,    // Doubled landmass radius (~1,800 tiles)
+            hex_size: scale / 1.732051, 
+            tile_scale: scale, 
+            // Smaller render distance to focus on the hand-crafted island
+            render_distance: 12, 
+            island_size: 35.0,   
+            height_step: 2.0, 
         }
     }
 }
 
+// Track grid data, including logical height
 #[derive(Resource, Default)]
 struct HexGridState {
     spawned_tiles: HashMap<(i32, i32), Entity>,
-    tile_types: HashMap<(i32, i32), TileType>,
+    tile_data: HashMap<(i32, i32), HexData>, // Store data, not just type
     seed: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct HexData {
+    tile_type: TileType,
+    height: i32, // Logical height: 0 = Ground, -1 = Water, 1 = Hill
 }
 
 #[derive(Component)]
@@ -53,206 +61,129 @@ struct HexTile;
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 enum TileType {
-    Water, WaterRock, DeepWater,
-    Sand, SandRocks,
-    Grass, Forest, ForestDense,
-    Hill, Mountain, Mine,
-    River, Path, Bridge,
-    // Civil Buildings
-    Castle, House, Mansion, Tower,
-    Market, Archery, Smelter, Mill, WaterMill,
-    Dock, Ship,
-    Lumber, Sheep, WatchTower,
+    // Terrain
+    Water, DeepWater,
+    Sand, 
+    Grass, 
+    Dirt,
+    Forest, 
+    Hill, 
+    Mountain, MountainSnow,
+    
+    // Paths/Fluids
+    River, 
+    Path, 
+    Bridge,
+    
+    // Buildings/Decor
+    Castle, 
+    House, 
+    Mill, 
+    Smelter,
+    Dock, 
+    Ship,
+    Sheep, 
+    Tower,
+    WallTower,
+    Lumber,
 }
 
-fn get_tile_type(q: i32, r: i32, seed: f32, island_size: f32) -> TileType {
-    let wn = crate::noise::WorldNoise::new(seed as u32);
-    
-    // --- 1. MOVABLE CENTER (The Capital) ---
-    // Use noise to offset the "center" of the world from (0,0)
-    // This makes the castle appear in different spots per seed
-    let center_q = (wn.get_noise(seed, seed) - 0.5) * island_size * 0.8;
-    let center_r = (wn.get_noise(seed + 50.0, seed) - 0.5) * island_size * 0.8;
-    
-    // Relative coordinates to the capital
-    let rel_q = q as f32 - center_q;
-    let rel_r = r as f32 - center_r;
-    let dist_to_center = (rel_q.abs() + (rel_q + rel_r).abs() + rel_r.abs()) / 2.0;
-    
-    let dist_from_origin = (q.abs() + (q + r).abs() + r.abs()) as f32 / 2.0;
+// --- STATIC MAP GENERATION ---
 
-    // Coordinates for noise
-    let q_f = q as f32;
-    let r_f = r as f32;
-
-
-    // --- 2. ORGANIC RIVERS (Ridged Noise Network) ---
-    // "Ridged" noise creates natural branching networks. 
-    // We take |noise| -> inverted gives us sharp valleys.
-    let river_noise_val = wn.fbm(q_f, r_f, 3, 0.5, 0.035).abs(); 
+fn generate_hex_data(q: i32, r: i32, _seed: f32, _island_size: f32) -> HexData {
+    // 1. Define the specific "Kenney Island" layout manually
+    // Coordinates are (q, r). Center is 0,0.
     
-    // Check neighbors to enforce LOCAL MINIMA (Single File Line)
-    let n_u = wn.fbm(q_f, r_f - 1.0, 3, 0.5, 0.035).abs();
-    let n_d = wn.fbm(q_f, r_f + 1.0, 3, 0.5, 0.035).abs();
-    let n_l = wn.fbm(q_f - 1.0, r_f, 3, 0.5, 0.035).abs();
-    let n_r = wn.fbm(q_f + 1.0, r_f, 3, 0.5, 0.035).abs();
+    let (t_type, height) = match (q, r) {
+        // --- MOUNTAINS (North) ---
+        (0, -3) => (TileType::MountainSnow, 3), // Main Peak
+        (1, -3) => (TileType::Mountain, 2),
+        (-1, -3) => (TileType::Mountain, 2),
+        (0, -2) => (TileType::Hill, 1), 
+        (-1, -2) => (TileType::Hill, 1),
 
-    // It is a river if we are lower than all neighbors (valley floor) AND below water table
-    let is_local_min = river_noise_val < n_u && river_noise_val < n_d && river_noise_val < n_l && river_noise_val < n_r;
-    let is_river = is_local_min && river_noise_val < 0.15; // Threshold slightly looser since min check is strict
-
-    // --- 3. ORGANIC PATHS (Radial + Rings) ---
-    // Warp the relative coordinates for wobbly paths
-    let warp_strength = 4.0;
-    
-    let get_path_noise = |qx: f32, rx: f32| -> f32 {
-        let wq = (qx - center_q) + (wn.get_noise(rx * 0.1, seed) - 0.5) * warp_strength;
-        let wr = (rx - center_r) + (wn.get_noise(qx * 0.1, seed + 10.0) - 0.5) * warp_strength;
-        // value is how close we are to "lines"
-        // Multidim logic:
-        // Radial: (atan2...) - simplified to just manhattan corridors for now?
-        // Let's stick to the previous "Spoke + Ring" math but check min/max
+        // --- CASTLE PLATEAU (East) ---
+        (2, -2) => (TileType::Castle, 1),
+        (3, -2) => (TileType::Tower, 1), 
+        (2, -1) => (TileType::Grass, 1), 
+        (3, -3) => (TileType::Hill, 1),  
         
-        let d = (wq.abs() + (wq + wr).abs() + wr.abs()) / 2.0; // Hex distance
+        // --- THE RIVER ---
+        (1, -2) => (TileType::River, 0), 
+        (1, -1) => (TileType::River, 0),
+        (1, 0)  => (TileType::River, -1), 
+        (1, 1)  => (TileType::River, -1),
+        (2, 1)  => (TileType::River, -1), 
         
-        // Ring check:
-        let ring_dist = d % 7.0; // Modulo 7
-        let dist_to_ring = (ring_dist - 3.5).abs(); // 0 at center of ring 
+        // --- FOREST (West) ---
+        (-2, -1) => (TileType::Forest, 0),
+        (-2, -2) => (TileType::Lumber, 0), 
+        (-3, -1) => (TileType::Forest, 0),
         
-        // Spoke check:
-        let spoke_val = wq.abs().min(wr.abs()).min((wq+wr).abs());
+        // --- FARMING VILLAGE (South West) ---
+        (-2, 0) => (TileType::Mill, 0),
+        (-2, 1) => (TileType::Sheep, 0),
+        (-1, 0) => (TileType::House, 0),
+        (-1, 1) => (TileType::House, 0),
         
-        dist_to_ring.min(spoke_val)
+        // --- THE ROAD ---
+        (-1, 2) => (TileType::Dock, 0),   
+        (-1, 3) => (TileType::Ship, -1),  
+        (0, 2)  => (TileType::Path, 0),
+        (0, 1)  => (TileType::Path, 0),
+        (0, 0)  => (TileType::Path, 0),   
+        (0, -1) => (TileType::Path, 0),   
+        (2, 0)  => (TileType::Bridge, 0), 
+        
+        // --- SANDY COAST ---
+        (q, r) if is_coast(q, r) => (TileType::Sand, 0),
+        
+        // --- DEEP WATER ---
+        (q, r) if is_deep_water(q, r) => (TileType::DeepWater, -2),
+
+        // --- GRASS PLAINS ---
+        _ => (TileType::Grass, 0),
     };
 
-    let p_val = get_path_noise(q_f, r_f);
-    let p_u = get_path_noise(q_f, r_f - 1.0);
-    let p_d = get_path_noise(q_f, r_f + 1.0);
-    let p_l = get_path_noise(q_f - 1.0, r_f);
-    let p_r = get_path_noise(q_f + 1.0, r_f);
+    HexData { tile_type: t_type, height }
+}
 
-    let is_path_min = p_val < p_u && p_val < p_d && p_val < p_l && p_val < p_r;
-    let is_main_path = is_path_min && p_val < 1.5 && dist_to_center < island_size * 1.2;
+fn is_coast(q: i32, r: i32) -> bool {
+    let dist = (q.abs() + (q + r).abs() + r.abs()) / 2;
+    dist == 3 || dist == 4
+}
 
-    // --- 4. TILE ASSIGNMENT PRIORITIES ---
-
-    // Crossings
-    if is_river && is_main_path { return TileType::Bridge; }
-    
-    // Water Features
-    if is_river {
-        let mill_chance = wn.get_noise(q_f * 2.3, r_f * 2.3);
-        if mill_chance > 0.85 && dist_to_center < island_size { return TileType::WaterMill; }
-        return TileType::River;
-    }
-    
-    if is_main_path { return TileType::Path; }
-
-    // --- 5. OCEAN / ISLAND SHAPE ---
-    // Use original distance logic for the island shape itself unless we want the island to move too?
-    // Let's keep the landmass somewhat centered on (0,0) but the Kingdom centered on center_q/r
-    // Actually, making the island shape noise-based is better.
-    let island_noise = wn.fbm(q_f, r_f, 2, 0.5, 0.05);
-    let coastline_threshold = island_size + island_noise * 5.0;
-    
-    if dist_from_origin > coastline_threshold {
-        if dist_from_origin > coastline_threshold + 4.0 { return TileType::DeepWater; }
-        let detail = wn.get_noise(q_f * 0.5, r_f * 0.5);
-        if detail > 0.85 { return TileType::WaterRock; }
-        if detail < 0.05 { return TileType::Ship; }
-        return TileType::Water;
-    }
-
-    if dist_from_origin > coastline_threshold - 2.0 {
-        if is_main_path { return TileType::Dock; }
-        let sand_noise = wn.get_noise(q_f * 0.3, r_f * 0.3);
-        if sand_noise > 0.7 { return TileType::SandRocks; }
-        return TileType::Sand;
-    }
-
-    // --- 6. BIOMES & CITY ---
-    let elevation = wn.fbm(q_f, r_f, 4, 0.5, 0.08); 
-    let moisture = wn.fbm(q_f + 500.0, r_f + 500.0, 2, 0.5, 0.03); 
-
-    // CAPITAL CITY (High density around movable center)
-    // Expanded radius for more houses
-    if dist_to_center < 8.5 {
-        let density = 1.0 - (dist_to_center / 8.5); 
-        let noise_mod = wn.get_noise(q_f * 0.8, r_f * 0.8);
-        
-        // Inner Sanctum
-        if dist_to_center < 1.8 { return TileType::Castle; }
-        
-        // Urban Sprawl - lowered threshold for more houses
-        if density + noise_mod * 0.3 > 0.45 {
-            if noise_mod > 0.85 { return TileType::Mansion; }
-            if noise_mod > 0.70 { return TileType::Market; }
-            if noise_mod > 0.60 { return TileType::Archery; }
-            if noise_mod > 0.50 { return TileType::Tower; }
-            return TileType::House; 
-        }
-    }
-
-    // MOUNTAINS / INDUSTRIAL
-    if elevation > 0.75 {
-        if moisture > 0.7 { return TileType::Mine; } // Rare
-        if moisture > 0.55 { return TileType::Smelter; }
-        if moisture < 0.15 { return TileType::WatchTower; } // Rare
-        return TileType::Mountain;
-    }
-    if elevation > 0.6 {
-        return TileType::Hill;
-    }
-
-    // FORESTS
-    if moisture > 0.6 {
-        if elevation > 0.3 { return TileType::ForestDense; }
-        return TileType::Forest;
-    }
-
-    // RURAL
-    let rural_noise = wn.get_noise(q_f * 0.45, r_f * 0.45);
-    // Very rare Mills as requested ("maybe 1 or 2")
-    if rural_noise > 0.96 { return TileType::Mill; } 
-    if rural_noise > 0.85 { return TileType::Sheep; }
-    if rural_noise < 0.08 { return TileType::Lumber; }
-
-    TileType::Grass
+fn is_deep_water(q: i32, r: i32) -> bool {
+    let dist = (q.abs() + (q + r).abs() + r.abs()) / 2;
+    dist > 4
 }
 // --- SYSTEMS ---
 
-pub fn setup_hex_resources(mut commands: Commands) {
-    commands.insert_resource(HexGridState {
-        spawned_tiles: HashMap::new(),
-        tile_types: HashMap::new(),
-        seed: rand::random::<f32>() * 100.0,
-    });
-}
+
 
 fn update_hex_map(
     mut commands: Commands,
     mut grid: ResMut<HexGridState>,
     asset_server: Res<AssetServer>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
     assets: Res<GameAssets>,
     player_q: Query<(&Transform, &Velocity), With<crate::Player>>,
     settings: Res<WorldSettings>,
+    mut materials: ResMut<Assets<StandardMaterial>>, // Added
 ) {
     let Ok((player_t, _)) = player_q.get_single() else { return };
 
     let q = ((f32::sqrt(3.0) / 3.0 * player_t.translation.x - 1.0 / 3.0 * player_t.translation.z) / settings.hex_size).round() as i32;
     let r = ((2.0 / 3.0 * player_t.translation.z) / settings.hex_size).round() as i32;
 
-    // PRE-PASS: Determine types first for neighbor checking
+    // PRE-PASS: Determine logical data first
     for dq in -settings.render_distance..=settings.render_distance {
         for dr in -settings.render_distance..=settings.render_distance {
             if (dq + dr).abs() > settings.render_distance { continue; }
             let nq = q + dq;
             let nr = r + dr;
-            if !grid.tile_types.contains_key(&(nq, nr)) {
-                let t_type = get_tile_type(nq, nr, grid.seed, settings.island_size);
-                grid.tile_types.insert((nq, nr), t_type);
+            if !grid.tile_data.contains_key(&(nq, nr)) {
+                let data = generate_hex_data(nq, nr, grid.seed, settings.island_size);
+                grid.tile_data.insert((nq, nr), data);
             }
         }
     }
@@ -273,293 +204,261 @@ fn update_hex_map(
                     &assets,
                     &mut grid,
                     &settings,
+                    &mut materials, // Pass materials
                 );
             }
         }
     }
 }
 
-fn calculate_neighbor_mask(q: i32, r: i32, tile_map: &HashMap<(i32, i32), TileType>, my_type: TileType) -> u8 {
-    let neighbors = [(q+1, r), (q, r+1), (q-1, r+1), (q-1, r), (q, r-1), (q+1, r-1)];
-    let mut mask = 0u8;
-    for (i, coord) in neighbors.iter().enumerate() {
-        if let Some(&nt) = tile_map.get(coord) {
-            match my_type {
-                TileType::River => {
-                    if matches!(nt, TileType::River | TileType::Bridge | TileType::Water | TileType::WaterRock | TileType::WaterMill) {
-                        mask |= 1 << i;
-                    }
-                },
-                TileType::Path => {
-                    // Paths connect to EVERYTHING urban or agricultural
-                    if matches!(nt, TileType::Path | TileType::Bridge | TileType::Castle | TileType::House | 
-                                   TileType::Market | TileType::Archery | TileType::Mansion | TileType::Dock | 
-                                   TileType::Tower | TileType::Mill | TileType::Lumber) {
-                        mask |= 1 << i;
-                    }
-                },
-                _ => {}
+
+
+#[derive(Resource, Default)]
+struct GrassGrid {
+    active_grass: HashMap<(i32, i32), Vec<Entity>>,
+}
+
+fn update_grass_around_player(
+    mut commands: Commands,
+    player_q: Query<&Transform, With<crate::Player>>,
+    mut grass_grid: ResMut<GrassGrid>,
+    grid_state: Res<HexGridState>,
+    settings: Res<WorldSettings>,
+    assets: Res<GameAssets>,
+) {
+    let Ok(player_t) = player_q.get_single() else { return };
+    let (p_q, p_r) = (((f32::sqrt(3.0)/3.0 * player_t.translation.x - 1.0/3.0 * player_t.translation.z) / settings.hex_size).round() as i32, 
+                      ((2.0/3.0 * player_t.translation.z) / settings.hex_size).round() as i32);
+
+    let mut needed = Vec::new();
+    for q in (p_q-6)..=(p_q+6) {
+        for r in (p_r-6)..=(p_r+6) {
+            if (q-p_q).abs() + (q+r-p_q-p_r).abs() + (r-p_r).abs() <= 12 { needed.push((q,r)); }
+        }
+    }
+
+    grass_grid.active_grass.retain(|k, v| {
+        if !needed.contains(k) { for e in v { commands.entity(*e).despawn(); } false } else { true }
+    });
+
+    let mut rng = rand::thread_rng();
+    for key in needed {
+        if grass_grid.active_grass.contains_key(&key) { continue; }
+        if let Some(data) = grid_state.tile_data.get(&key) {
+            if data.height >= 0 && data.tile_type == TileType::Grass {
+                let world_pos = Vec3::new(settings.hex_size * f32::sqrt(3.0) * (key.0 as f32 + key.1 as f32 / 2.0), 
+                                          data.height as f32 * settings.height_step, 
+                                          settings.hex_size * 1.5 * key.1 as f32);
+                let mut ids = Vec::new();
+                for _ in 0..20 {
+                    let offset = Vec3::new(rng.gen_range(-3.0..3.0), 0.1, rng.gen_range(-3.0..3.0));
+                    ids.push(commands.spawn((Mesh3d(assets.grass_mesh.clone()), MeshMaterial3d(assets.grass_mat_1.clone()), 
+                        Transform::from_translation(world_pos + offset).with_rotation(Quat::from_rotation_y(rng.gen_range(0.0..PI * 2.0))), Foliage)).id());
+                }
+                grass_grid.active_grass.insert(key, ids);
             }
+        }
+    }
+}
+
+// --- ENHANCED SPAWNING ENGINE ---
+
+// Map neighbor bitmask to Kenney file suffixes
+fn get_kenney_connection_model(mask: u8, prefix: &str) -> (String, f32) {
+    let m6 = mask & 0b111111;
+    if m6 == 0 { return (format!("{}-start.glb", prefix), 0.0); }
+
+    let patterns = [
+        (0b000001, "end"),
+        (0b001001, "straight"),
+        (0b000101, "corner"),
+        (0b000011, "corner-sharp"),
+        (0b010101, "intersectionD"), // Y-shape
+        (0b011011, "intersectionG"), // X-shape
+    ];
+
+    for r in 0..6 {
+        let mut shifted = m6;
+        // Manual bit rotation for r steps
+        for _ in 0..r { shifted = ((shifted >> 1) | (shifted << 5)) & 0b111111; }
+        
+        for (pattern, suffix) in patterns {
+            if shifted == pattern {
+                return (format!("{}-{}.glb", prefix, suffix), -(r as f32) * PI / 3.0);
+            }
+        }
+    }
+    (format!("{}-crossing.glb", prefix), 0.0)
+}
+
+
+
+fn calculate_neighbor_mask(q: i32, r: i32, tile_data: &HashMap<(i32, i32), HexData>, target_type: TileType) -> u8 {
+    let mut mask = 0;
+    let neighbors = [(1, 0), (0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1)];
+    for (i, (dq, dr)) in neighbors.iter().enumerate() {
+        if let Some(data) = tile_data.get(&(q + dq, r + dr)) {
+            let is_match = match (target_type, data.tile_type) {
+                (TileType::River, TileType::River) | (TileType::River, TileType::Bridge) => true,
+                (TileType::Path, TileType::Path) | (TileType::Path, TileType::Bridge) => true,
+                (a, b) if a == b => true,
+                _ => false,
+            };
+            if is_match { mask |= 1 << i; }
         }
     }
     mask
 }
-
-// --- ENHANCED SPAWNING ENGINE ---
 
 fn spawn_hex(
     commands: &mut Commands,
     q: i32,
     r: i32,
     asset_server: &AssetServer,
-    assets: &GameAssets,
+    _assets: &GameAssets,
     grid: &mut HexGridState,
     settings: &WorldSettings,
+    _materials: &mut ResMut<Assets<StandardMaterial>>,
 ) {
+    let data = *grid.tile_data.get(&(q, r)).unwrap_or(&HexData { tile_type: TileType::DeepWater, height: -2 });
+    
+    // 1. Position Math (Seamless)
     let x = settings.hex_size * f32::sqrt(3.0) * (q as f32 + r as f32 / 2.0);
-    let z = settings.hex_size * 3.0 / 2.0 * r as f32;
-    let pos = Vec3::new(x, 0.0, z); 
+    let z = settings.hex_size * 1.5 * r as f32;
+    let pos = Vec3::new(x, 0.0, z);
+    let scale_vec = Vec3::splat(settings.tile_scale);
 
-    let my_type = *grid.tile_types.get(&(q, r)).unwrap_or(&TileType::Water);
-    let mut rng = rand::thread_rng();
-
-    // surface_y hides the bottom half of the hexes for a clean grid look
-    // Adjusted to -45.0 to bring top of hex (scale 90, height 1) to y=0
-    let surface_y = -45.0;
-    let mut scale_vec = Vec3::splat(settings.tile_scale);
-
-    let mut base_glb = "grass.glb";
-    let mut feature_glb: Option<String> = None;
-    let mut rotation_y = 0.0;
-    let mut y_offset = 0.0;
-
-    // --- LAYER 1: THE GRID BASE ---
-    match my_type {
-        TileType::DeepWater | TileType::Water | TileType::WaterRock | TileType::Ship | TileType::Bridge => {
-            if rng.gen_bool(0.1) { base_glb = "water-island.glb"; } else { base_glb = "water.glb"; }
-            y_offset = -2.5; 
-        }
-        TileType::Sand | TileType::Dock => {
-            if rng.gen_bool(0.3) { base_glb = "sand-desert.glb"; } else { base_glb = "sand.glb"; }
-        },
-        TileType::Mountain | TileType::Mine | TileType::Smelter => {
-             // Occasional rocky ground
-             if rng.gen_bool(0.3) { base_glb = "stone-rocks.glb"; } else { base_glb = "stone.glb"; }
-        },
-        TileType::Lumber => base_glb = "dirt.glb",
-        TileType::Market => base_glb = "path-square.glb", 
-        TileType::Castle => {
-            // Castle complex sometimes gets walls or paved square
-            if rng.gen_bool(0.5) { base_glb = "path-square.glb"; } else { base_glb = "path-square-end.glb"; }
-        }
-        _ => {}
-    }
-
-    // --- LAYER 2: THE FEATURES ---
-    match my_type {
-        TileType::River | TileType::Path => {
-            let is_river = my_type == TileType::River;
-            let mask = calculate_neighbor_mask(q, r, &grid.tile_types, my_type);
-            // Use improved intersection logic if 3+ connections
-            let count = mask.count_ones();
-            let (model, rot_steps) = if count > 2 {
-                get_intersection_model(mask)
-            } else {
-                 get_connection_model(mask)
-            };
-            
-            feature_glb = Some(format!("{}-{}.glb", if is_river { "river" } else { "path" }, model));
-            rotation_y = -((rot_steps as f32 + 3.0) * PI / 3.0);
-            y_offset += if is_river { -0.1 } else { 0.05 }; 
-        }
-        TileType::Bridge => {
-            feature_glb = Some("bridge.glb".into());
-            let mask = calculate_neighbor_mask(q, r, &grid.tile_types, TileType::River);
-            let (_, rot_steps) = get_connection_model(mask);
-            rotation_y = -((rot_steps as f32 + 3.0) * PI / 3.0);
-        }
-        TileType::Castle => {
-            // Use walls for the castle itself logic
-            let r = rng.gen_range(0..10);
-            if r < 6 { feature_glb = Some("building-castle.glb".into()); }
-            else if r < 8 { feature_glb = Some("building-wall.glb".into()); }
-            else { feature_glb = Some("building-walls.glb".into()); }
-        },
-        TileType::House => {
-             // Variety for houses
-             let roll = rng.gen_range(0..100);
-             feature_glb = Some(match roll {
-                 0..=40 => "building-house.glb".into(),
-                 41..=70 => "unit-house.glb".into(), // Smaller house
-                 71..=90 => "building-village.glb".into(), // Clustered
-                 _ => "building-cabin.glb".into(), // Rustic
-             });
-             rotation_y = rng.gen_range(0.0..PI * 2.0);
-        },
-        TileType::Mansion => {
-             feature_glb = Some("unit-mansion.glb".into());
-             rotation_y = rng.gen_range(0.0..PI * 2.0);
-        },
-        TileType::Market => {
-             feature_glb = Some("building-market.glb".into());
-             rotation_y = rng.gen_range(0.0..PI * 2.0);
-        },
-        TileType::Archery => feature_glb = Some("building-archery.glb".into()),
-        TileType::Mine => {
-            feature_glb = Some("building-mine.glb".into());
-            spawn_sub_layer(commands, asset_server, "building-mine.glb", pos, 0.0, 0.0, scale_vec); 
-        },
-        TileType::Smelter => {
-            feature_glb = Some("building-smelter.glb".into());
-        },
-        TileType::Mill => {
-            // Variety for farms
-            if rng.gen_bool(0.3) {
-                feature_glb = Some("building-farm.glb".into());
-            } else {
-                feature_glb = Some("building-mill.glb".into());
-            }
-            rotation_y = rng.gen_range(0.0..PI * 2.0);
-        },
-        TileType::WaterMill => {
-             feature_glb = Some("building-watermill.glb".into());
-             // Orient towards water? Complicated without neighbor context, just random for now or fixed
-             rotation_y = rng.gen_range(0.0..PI * 2.0);
-        },
-        TileType::Sheep => {
-             feature_glb = Some("building-sheep.glb".into());
-             rotation_y = rng.gen_range(0.0..PI * 2.0);
-        },
-        TileType::Lumber => {
-             // Cabins or Lumber piles
-             feature_glb = Some(if rng.gen_bool(0.5) { "dirt-lumber.glb".into() } else { "building-cabin.glb".into() });
-             rotation_y = rng.gen_range(0.0..PI * 2.0);
-        },
-        TileType::Dock => { 
-            feature_glb = Some(if rng.gen_bool(0.3) { "building-port.glb".into() } else { "building-dock.glb".into() }); 
-            rotation_y = PI; 
-        },
-        TileType::WatchTower | TileType::Tower => { 
-            if rng.gen_bool(0.1) {
-                feature_glb = Some("building-wizard-tower.glb".into());
-            } else {
-                feature_glb = Some(if rng.gen_bool(0.5) { "building-tower.glb".into() } else { "unit-tower.glb".into() });
-            }
-        },
-        TileType::ForestDense => {
-             feature_glb = Some("grass-forest.glb".into());
-             rotation_y = rng.gen_range(0.0..PI * 2.0);
-             scale_vec *= rng.gen_range(0.85..1.15); 
-        },
-        TileType::Mountain => {
-             feature_glb = Some("stone-mountain.glb".into());
-             rotation_y = rng.gen_range(0.0..PI * 2.0);
-             scale_vec *= rng.gen_range(0.9..1.3);
-        },
-        TileType::Hill => {
-             // Mix stone hills and grass hills
-             feature_glb = Some(if rng.gen_bool(0.3) { "stone-hill.glb".into() } else { "grass-hill.glb".into() });
-             rotation_y = rng.gen_range(0.0..PI * 2.0);
-        },
-        TileType::Ship => {
-             feature_glb = Some(if rng.gen_bool(0.5) { "unit-ship.glb".into() } else { "unit-ship-large.glb".into() });
-             rotation_y = rng.gen_range(0.0..PI * 2.0);
-        },
-        TileType::Forest => {
-             feature_glb = Some("unit-tree.glb".into()); // Spawn 1 tree centrally
-             rotation_y = rng.gen_range(0.0..PI * 2.0);
-             scale_vec *= rng.gen_range(0.8..1.2);
-        },
-        TileType::WaterRock => {
-             feature_glb = Some("water-rocks.glb".into());
-             rotation_y = rng.gen_range(0.0..PI * 2.0);
-        },
-        TileType::SandRocks => {
-             feature_glb = Some("sand-rocks.glb".into());
-             rotation_y = rng.gen_range(0.0..PI * 2.0);
-        },
-        TileType::Grass => {
-            // Spawn lush green thick grass on grass hexes - Dense & Optimized
-            for i in 0..36 {
-                let rx = rng.gen_range(-settings.hex_size*0.42..settings.hex_size*0.42);
-                let rz = rng.gen_range(-settings.hex_size*0.42..settings.hex_size*0.42);
-                
-                // Use shared mesh and materials for GPU instancing
-                let mat = if i % 2 == 0 { assets.grass_mat_1.clone() } else { assets.grass_mat_2.clone() };
-                
-                commands.spawn((
-                    Mesh3d(assets.grass_mesh.clone()),
-                    MeshMaterial3d(mat),
-                    Transform::from_xyz(x + rx, 0.05, z + rz) // Sit exactly at y=0 surface
-                        .with_rotation(Quat::from_rotation_y(rng.gen_range(0.0..PI))),
-                    Foliage,
-                ));
-            }
-        },
-        _ => {}
-    }
-
-    let parent_id = commands.spawn((
-        Transform::from_translation(pos),
-        Visibility::default(),
-        HexTile,
+    let parent = commands.spawn((
+        Transform::from_translation(pos), 
+        Visibility::default(), 
+        HexTile
     )).id();
 
-    // Spawn Base Ground (The Grid)
-    commands.spawn((
-        SceneRoot(asset_server.load(format!("{}#Scene0", base_glb))),
-        Transform::from_xyz(0.0, surface_y + (if base_glb == "water.glb" { -2.5 } else { 0.0 }), 0.0)
-            .with_scale(scale_vec),
-    )).set_parent(parent_id);
-
-    // Spawn Feature (The Detail)
-    if let Some(glb) = feature_glb {
-        // SPECIAL CASE: Mobile Agents (Sheep, Ship)
-        // We spawn them as separate entities, not children of the tile, so they can move.
-        if my_type == TileType::Sheep || my_type == TileType::Ship {
-            let spawn_pos = pos + Vec3::new(0.0, y_offset, 0.0);
-            
-            // Determine agent type
-            let is_ship = my_type == TileType::Ship;
-            let collider_radius = if is_ship { 1.5 } else { 0.5 };
-            
-            commands.spawn((
-                SceneRoot(asset_server.load(format!("{}#Scene0", glb))),
-                Transform::from_translation(spawn_pos)
-                    .with_rotation(Quat::from_rotation_y(rotation_y))
-                    .with_scale(scale_vec),
-                RigidBody::Dynamic,
-                LockedAxes::ROTATION_LOCKED_X | LockedAxes::ROTATION_LOCKED_Z,
-                Velocity::default(),
-                Collider::ball(collider_radius),
-                Friction::coefficient(0.0),
-                Damping { linear_damping: 2.0, angular_damping: 1.0 },
-                GravityScale(1.0),
-                Steer {
-                    target: None,
-                    speed: if is_ship { 3.0 } else { 1.5 },
-                    avoid_obstacles: true,
-                    stay_on_ground: !is_ship,
-                    can_jump: !is_ship,
-                    last_jump_time: 0.0,
-                },
-                // Tag for logic
-                if is_ship { UnitType::Ship } else { UnitType::Sheep },
-            ));
-            
-            // Do NOT set parent, so it's free to move
-        } else {
-            // Standard Static Feature
-            commands.spawn((
-                SceneRoot(asset_server.load(format!("{}#Scene0", glb))),
-                Transform::from_xyz(0.0, y_offset, 0.0)
-                    .with_rotation(Quat::from_rotation_y(rotation_y))
-                    .with_scale(scale_vec),
-            )).set_parent(parent_id);
+    // 2. Identify Shoreline (Seamless Transition)
+    let mut is_shore = false;
+    let mut shore_rot = 0.0;
+    if data.tile_type == TileType::Sand {
+        let mask = calculate_neighbor_mask(q, r, &grid.tile_data, TileType::DeepWater);
+        if mask != 0 {
+            is_shore = true;
+            for i in 0..6 {
+                if (mask & (1 << i)) != 0 {
+                    shore_rot = -(i as f32) * PI / 3.0; 
+                    break;
+                }
+            }
         }
     }
 
-    grid.spawned_tiles.insert((q, r), parent_id);
+    // 3. Terrain Stacking & Cliff Sides
+    let stack_start = if data.height > 0 { 0 } else { data.height };
+    for h in stack_start..=data.height {
+        let is_top = h == data.height;
+        let layer_y = (h as f32 * settings.height_step);
+        
+        // Base Foundation (The Skirt)
+        if h == stack_start {
+             commands.spawn((
+                SceneRoot(asset_server.load("dirt.glb#Scene0")),
+                Transform::from_xyz(0.0, layer_y - (settings.height_step * 0.4), 0.0)
+                    .with_scale(scale_vec * Vec3::new(0.85, 0.8, 0.85)), 
+            )).set_parent(parent);
+        }
+
+        let mut model = "dirt.glb";
+        let mut rotation = 0.0;
+
+        if is_top {
+            match data.tile_type {
+                // --- BASICS ---
+                TileType::Grass => model = "grass.glb",
+                TileType::Sand => model = "sand.glb",
+                TileType::Dirt => model = "dirt.glb",
+                
+                // --- MOUNTAINS ---
+                TileType::Mountain => model = "stone-mountain.glb",
+                TileType::MountainSnow => model = "stone-mountain.glb", 
+                TileType::Hill => model = "grass-hill.glb",
+
+                // --- FLUIDS / PATHS (Auto-Tiling) ---
+                TileType::River => {
+                    let mask = calculate_neighbor_mask(q, r, &grid.tile_data, TileType::River);
+                    let (m_name, rot) = get_kenney_connection_model(mask, "river");
+                    spawn_custom_model(commands, asset_server, &m_name, pos, layer_y - 0.2, rot, settings.tile_scale);
+                    model = "grass.glb"; // Underlay
+                }
+                TileType::Path => {
+                    let mask = calculate_neighbor_mask(q, r, &grid.tile_data, TileType::Path);
+                    let (m_name, rot) = get_kenney_connection_model(mask, "path");
+                    spawn_custom_model(commands, asset_server, &m_name, pos, layer_y + 0.05, rot, settings.tile_scale);
+                    model = "grass.glb"; // Underlay
+                }
+                TileType::Bridge => {
+                    model = "bridge.glb";
+                    rotation = PI / 2.0; 
+                    spawn_custom_model(commands, asset_server, "river-straight", pos, layer_y - 0.2, 0.0, settings.tile_scale);
+                    // Underlay grass
+                    commands.spawn((
+                        SceneRoot(asset_server.load("grass.glb#Scene0")),
+                        Transform::from_xyz(0.0, layer_y, 0.0).with_scale(scale_vec),
+                    )).set_parent(parent);
+                }
+
+                // --- BUILDINGS ---
+                TileType::Castle => model = "building-castle.glb",
+                TileType::Tower => model = "building-tower.glb",
+                TileType::WallTower => model = "unit-wall-tower.glb",
+                
+                TileType::Mill => model = "building-mill.glb",
+                TileType::House => model = "building-cabin.glb",
+                TileType::Sheep => model = "building-sheep.glb",
+                TileType::Smelter => model = "building-smelter.glb",
+                TileType::Lumber => model = "dirt-lumber.glb",
+
+                // --- WATER ---
+                TileType::Dock => {
+                    model = "building-dock.glb";
+                    rotation = PI; 
+                }
+                TileType::Ship => {
+                    model = "unit-ship.glb";
+                    commands.entity(parent).insert(Bob { 
+                        speed: 1.0, 
+                        amount: 0.1, 
+                        base_y: pos.y + layer_y, 
+                        offset: 0.0 
+                    });
+                }
+                TileType::Forest => {
+                    model = "grass.glb"; 
+                    spawn_custom_model(commands, asset_server, "unit-tree", pos, layer_y, rand::random::<f32>() * 6.0, settings.tile_scale * 1.2);
+                }
+                
+                TileType::DeepWater => {
+                    model = "water.glb";
+                }
+                
+                _ => {}
+            }
+            
+            // Shore Override
+            if is_shore && data.tile_type == TileType::Sand {
+                model = "water-rocks.glb";
+                rotation = shore_rot;
+            }
+        } else {
+            model = if data.tile_type == TileType::Mountain || data.tile_type == TileType::MountainSnow { "stone.glb" } else { "dirt.glb" };
+        }
+
+        commands.spawn((
+            SceneRoot(asset_server.load(format!("{}#Scene0", model))),
+            Transform::from_xyz(0.0, layer_y, 0.0)
+                .with_scale(scale_vec)
+                .with_rotation(Quat::from_rotation_y(rotation)),
+        )).set_parent(parent);
+    }
+    
+    grid.spawned_tiles.insert((q, r), parent);
 }
 
 // Helper for complex multi-model tiles (like Mine on Mountain)
@@ -573,10 +472,20 @@ fn spawn_sub_layer(cmds: &mut Commands, asset_server: &AssetServer, glb: &str, p
 }
 
 // Helper to spawn the overlay assets (Rivers/Paths)
-fn spawn_custom_model(commands: &mut Commands, asset_server: &AssetServer, path: &str, world_pos: Vec3, y: f32, rot: f32, scale: f32) {
+fn spawn_custom_model(
+    commands: &mut Commands, 
+    asset_server: &AssetServer, 
+    model_name: &str, 
+    offset: Vec3, 
+    y: f32, 
+    rot: f32, 
+    scale: f32
+) {
+    let name = if model_name.ends_with(".glb") { model_name.to_string() } else { format!("{}.glb", model_name) };
+    
     commands.spawn((
-        SceneRoot(asset_server.load(format!("{}#Scene0", path))),
-        Transform::from_translation(world_pos + Vec3::Y * y)
+        SceneRoot(asset_server.load(format!("{}#Scene0", name))),
+        Transform::from_translation(offset + Vec3::new(0.0, y, 0.0))
             .with_rotation(Quat::from_rotation_y(rot))
             .with_scale(Vec3::splat(scale)),
     ));
@@ -623,14 +532,33 @@ fn reload_scene_system(
     keys: Res<ButtonInput<KeyCode>>,
     mut grid: ResMut<HexGridState>,
     tiles: Query<Entity, With<HexTile>>,
+    mut grass: ResMut<GrassGrid>,
+    mut player_q: Query<(&mut Transform, &mut Velocity), With<crate::Player>>,
 ) {
     if keys.just_pressed(KeyCode::KeyG) {
         for entity in tiles.iter() {
             commands.entity(entity).despawn_recursive();
         }
         grid.spawned_tiles.clear();
+        grid.tile_data.clear();
+        
+        // Clear grass artifacts
+        for entities in grass.active_grass.values() {
+            for e in entities {
+                commands.entity(*e).despawn();
+            }
+        }
+        grass.active_grass.clear();
+        
+        // Reset Player to Origin
+        if let Ok((mut trans, mut vel)) = player_q.get_single_mut() {
+            trans.translation = Vec3::ZERO;
+            vel.linvel = Vec3::ZERO;
+            vel.angvel = Vec3::ZERO;
+        }
+
         grid.seed = rand::random::<f32>() * 1000.0;
-        info!("World Rer#generated with Seed: {}", grid.seed);
+        info!("World regenerated at Origin (0,0,0) with Seed: {}", grid.seed);
     }
 }
 
@@ -687,7 +615,7 @@ fn world_tuner_system(
             commands.entity(entity).despawn_recursive();
         }
         grid.spawned_tiles.clear();
-        grid.tile_types.clear(); // Clear calculated types so they rer#generate with new size
+        grid.tile_data.clear(); // Clear calculated types so they regenerate with new size
     }
 }
 
@@ -1246,6 +1174,7 @@ fn main() {
         .init_resource::<SelectionState>()
         .init_resource::<WorldSettings>()
         .init_resource::<SpatialHash>()
+        .init_resource::<GrassGrid>()
         .insert_resource(PhaseManager { 
             timer: Timer::from_seconds(60.0, TimerMode::Once), 
             wave: 1, 
@@ -1272,6 +1201,7 @@ fn main() {
             auto_target_system,
             update_token_buffs_system, // Calculate buffs from wallet balance
             foliage_billboard_system,
+            update_grass_around_player,
         ), (
             check_game_over,
             muzzle_flash_logic,
@@ -1430,7 +1360,15 @@ fn setup_lighting_only(
             ..default() 
         },
         WowCameraRig::default(),
-        Transform::from_xyz(0.0, 150.0, 150.0),
+        Transform::from_xyz(0.0, 120.0, 120.0),
+        FogSettings {
+            color: Color::srgb(0.7, 0.85, 1.0), // Sky Blue
+            falloff: FogFalloff::Linear {
+                start: 100.0, // Push start back so mid-range is clear
+                end: 450.0,   // Match roughly (hex_size * render_distance * 1.5)
+            },
+            ..default()
+        },
     ));
 
     // 1. SKY SPHERE (Toon Sky)
@@ -1447,23 +1385,25 @@ fn setup_lighting_only(
         NotShadowCaster,
     ));
 
-    // 2. SUN LIGHT (Directional)
+    // 2. SUN LIGHT (The Key to "Pop")
     commands.spawn((
         DirectionalLight {
             shadows_enabled: true,
-            illuminance: 12000.0,
+            illuminance: 8000.0, 
             shadow_depth_bias: 0.02,
             shadow_normal_bias: 0.02,
             ..default()
         },
-        Transform::from_xyz(50.0, 50.0, 50.0).looking_at(Vec3::ZERO, Vec3::Y),
+        // Lower angle = Longer shadows = More depth
+        Transform::from_xyz(50.0, 25.0, 50.0).looking_at(Vec3::ZERO, Vec3::Y),
         Sun,
     ));
 
-    // 3. AMBIENT LIGHT
+    // 3. AMBIENT LIGHT (Shadow Color)
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.5, 0.5, 0.8),
-        brightness: 400.0,
+        // Dark Blue/Purple shadows contrast beautifully with Yellow/Orange sunlight
+        color: Color::srgb(0.1, 0.1, 0.35), 
+        brightness: 150.0, // Not too bright, let the sun do the work
     });
     
     // 4. DAY NIGHT TIMER
@@ -1510,10 +1450,10 @@ fn day_night_cycle(
         
         // Dim light at night
         let intensity = angle.sin().max(0.0); // 0.0 at night, 1.0 at noon
-        light.illuminance = intensity * 35000.0;
+        light.illuminance = intensity * 6000.0;
         
         // Update Ambient
-        let ambient_intensity = 150.0 + intensity * 600.0;
+        let ambient_intensity = 40.0 + intensity * 40.0;
         ambient.brightness = ambient_intensity;
         
         // Warm color at sunrise/sunset
@@ -1522,7 +1462,7 @@ fn day_night_cycle(
         } else if intensity <= 0.0 {
             ambient.color = Color::srgb(0.1, 0.1, 0.3); // Deep Blue Night
         } else {
-             ambient.color = Color::srgb(0.9, 0.9, 1.0); // Slightly brighter blue-ish Day
+             ambient.color = Color::srgb(0.2, 0.2, 0.5); // Stilish Blue shadows
         }
     }
 }
@@ -1551,7 +1491,7 @@ fn setup_game(
     // 1. Initialize HexGridState
     let grid = HexGridState {
         spawned_tiles: HashMap::new(),
-        tile_types: HashMap::new(),
+        tile_data: HashMap::new(),
         seed: rand::random::<f32>() * 100.0,
     };
     
@@ -1568,8 +1508,8 @@ fn setup_game(
                 let dist = i32::abs(q + r);
                 if dist > radius { continue; }
                 
-                let t_type = get_tile_type(q, r, grid.seed, settings.island_size);
-                if t_type == TileType::Grass {
+                let data = generate_hex_data(q, r, grid.seed, settings.island_size);
+                if (data.tile_type == TileType::Grass || data.tile_type == TileType::Sand) && data.height >= 0 {
                     center_q = q;
                     center_r = r;
                     found = true;
@@ -1598,17 +1538,31 @@ fn setup_game(
 
     // 5. Spawn Village
     setup_starting_village(&mut commands, &mut meshes, &mut materials, spawn_pos);
+
+    // 6. Spawn Large Water Plane (Sea Level)
+    commands.spawn((
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(2000.0, 2000.0))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgba(0.2, 0.5, 0.8, 0.8), // Matches Kenney water blue
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 0.2,
+            metallic: 0.0,
+            ..default()
+        })),
+        // -1 height * 1.0 step = -1.0. Place plane slightly below to avoid Z-fighting 
+        // with river tiles, but cover the empty sea area.
+        Transform::from_xyz(0.0, -1.2, 0.0), 
+    ));
 }
 
-fn setup_player(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, assets: &GameAssets, pos: Vec3) {
+fn setup_player(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, _assets: &GameAssets, pos: Vec3) {
     let radius = 1.0;
     let length = 2.5; 
     commands.spawn((
         Mesh3d(meshes.add(Capsule3d::new(radius, length))), 
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.0, 0.8, 1.0),
-            base_color_texture: Some(assets.debug_tex.clone()),
-            emissive: LinearRgba::new(0.0, 0.8, 1.0, 2.0),
+            base_color: Color::srgb(1.0, 0.5, 0.0), // Distinct Orange
+            emissive: LinearRgba::new(2.0, 1.0, 0.0, 1.0), // Glow
             ..default()
         })),
         Transform::from_translation(pos + Vec3::Y * 5.0), 
@@ -1740,11 +1694,12 @@ fn setup_ui(mut commands: Commands) {
         root.spawn((
             Node {
                 position_type: PositionType::Absolute, left: Val::Px(10.0), top: Val::Px(10.0),
-                padding: UiRect::all(Val::Px(15.0)),
+                padding: UiRect::all(Val::Px(12.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
-            BorderRadius::all(Val::Px(8.0)),
+            // Lower opacity for less obtrusive UI
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.4)),
+            BorderRadius::all(Val::Px(6.0)),
         )).with_children(|panel| {
             panel.spawn((Text::new("Init..."), TextFont { font_size: 16.0, ..default() }, TextColor(Color::WHITE), HudText));
         });
@@ -3323,7 +3278,7 @@ fn spawn_dust(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mu
 fn spawn_dust_burst(commands: &mut Commands, meshes: &mut Assets<Mesh>, materials: &mut Assets<StandardMaterial>, pos: Vec3, color: Color) {
     let mut rng = rand::thread_rng();
     for _ in 0..10 {
-        let vel = Vec3::new(rng.r#gen_range(-5.0..5.0), rng.r#gen_range(2.0..10.0), rng.r#gen_range(-5.0..5.0));
+        let vel = Vec3::new(rng.gen_range(-5.0..5.0), rng.gen_range(2.0..10.0), rng.gen_range(-5.0..5.0));
         commands.spawn((
             Mesh3d(meshes.add(Sphere::new(1.0))),
             MeshMaterial3d(materials.add(StandardMaterial {
