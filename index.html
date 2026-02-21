@@ -484,6 +484,100 @@
         .loading-text {
             animation: pulse 2s ease-in-out infinite;
         }
+
+        /* Purchase Modal */
+        #purchase-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1000;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            background: rgba(0, 0, 0, 0.4);
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .modal-content {
+            background: var(--panel);
+            border: 1px solid var(--primary);
+            border-radius: 24px;
+            padding: 40px;
+            max-width: 450px;
+            width: 90%;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0, 243, 255, 0.3);
+            position: relative;
+            animation: slideUp 0.4s cubic-bezier(0.17, 0.67, 0.83, 0.67);
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(50px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .modal-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 1.8rem;
+            color: var(--primary);
+            margin-bottom: 20px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .modal-desc {
+            font-size: 1rem;
+            color: rgba(255, 255, 255, 0.8);
+            line-height: 1.6;
+            margin-bottom: 30px;
+        }
+
+        .buy-btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, var(--primary), var(--purple));
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 15px;
+            box-shadow: 0 5px 15px rgba(0, 243, 255, 0.3);
+        }
+
+        .buy-btn:hover {
+            transform: scale(1.02);
+            box-shadow: 0 8px 25px rgba(0, 243, 255, 0.5);
+        }
+
+        .dismiss-link {
+            color: rgba(255, 255, 255, 0.4);
+            text-decoration: none;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: color 0.3s;
+        }
+
+        .dismiss-link:hover {
+            color: var(--primary);
+        }
+
+        /* Hide landing and loader by default for seamless entry */
+        #landing, #loader {
+            display: none !important;
+        }
     </style>
 </head>
 <body>
@@ -549,6 +643,19 @@
         <button id="start-btn" class="cmd-btn">ENGAGE SYSTEM</button>
     </div>
 
+    <!-- Purchase Modal -->
+    <div id="purchase-modal">
+        <div class="modal-content">
+            <div class="modal-title">CONTINUE COMMANDER?</div>
+            <p class="modal-desc">
+                Your neural link requires more $HXGME to maintain maximum performance. 
+                Acquire tokens to unlock premium combat buffs and continue your conquest.
+            </p>
+            <button id="buy-token-btn" class="buy-btn">BUY $HXGME</button>
+            <div id="dismiss-modal" class="dismiss-link">CONTINUE WITH LIMITED COMPUTE</div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.js"></script>
 
@@ -571,8 +678,8 @@
     </script>
 
     <script type="module">
-        import init from './farm-blazer.js';
-        const WASM_PATH = './farm-blazer.wasm';
+        import init from './out/farm-blazer.js';
+        const WASM_PATH = './out/farm-blazer_bg.wasm';
 
         // DOM Elements
         const landing = document.getElementById('landing');
@@ -591,6 +698,9 @@
         let hxgmeBalance = 0;
         let wasmBlobUrl = null;
         let connectedWalletType = null;
+        let clickCount = 0;
+        let modalShown = false;
+        const MODAL_THRESHOLD = 50; // Show after 50 clicks
 
         // Multi-Wallet Detection
         function detectWallets() {
@@ -601,17 +711,19 @@
         }
 
         // Unified Wallet Connection
-        async function connectWallet() {
+        async function connectWallet(silent = false) {
             try {
                 const wallets = detectWallets();
                 
                 if (!wallets.phantom && !wallets.jupiter) {
-                    walletStatus.style.display = 'block';
-                    walletStatus.innerHTML = `
-                        ⚠️ No Solana wallet detected. Install one to continue:<br><br>
-                        <a href="https://phantom.app" target="_blank">📱 Phantom Wallet</a><br>
-                        <a href="https://jup.ag/swap" target="_blank">🪐 Jupiter Wallet</a>
-                    `;
+                    if (!silent) {
+                        walletStatus.style.display = 'block';
+                        walletStatus.innerHTML = `
+                            ⚠️ No Solana wallet detected. Install one to continue:<br><br>
+                            <a href="https://phantom.app" target="_blank">📱 Phantom Wallet</a><br>
+                            <a href="https://jup.ag/swap" target="_blank">🪐 Jupiter Wallet</a>
+                        `;
+                    }
                     return;
                 }
 
@@ -628,7 +740,7 @@
                     connectedWalletType = 'jupiter';
                 }
 
-                const response = await provider.connect();
+                const response = await provider.connect({ onlyIfTrusted: silent });
                 walletAddress = response.publicKey.toString();
                 walletConnected = true;
 
@@ -639,19 +751,12 @@
 
                 await updateTokenBalance();
 
-                setTimeout(() => {
-                    landing.style.opacity = '0';
-                    setTimeout(() => {
-                        landing.style.display = 'none';
-                        loader.style.display = 'flex';
-                        runLoader();
-                    }, 1000);
-                }, 2000);
-
             } catch (err) {
-                console.error('Wallet connection failed:', err);
-                walletStatus.style.display = 'block';
-                walletStatus.innerHTML = '❌ Connection failed. Please try again.';
+                console.warn('Wallet auto-connection declined:', err);
+                if (!silent) {
+                    walletStatus.style.display = 'block';
+                    walletStatus.innerHTML = '❌ Connection failed. Please try again.';
+                }
             }
         }
 
@@ -712,18 +817,18 @@
 
                 wasmBlobUrl = URL.createObjectURL(new Blob(chunks, { type: 'application/wasm' }));
                 statusTxt.innerText = "System Ready";
-                startBtn.style.display = 'block';
+                
+                // Auto-boot when ready
+                setTimeout(boot, 500);
 
             } catch (e) {
+                console.error("Loader failed:", e);
                 statusTxt.innerText = "CONNECTION FAILURE";
                 statusTxt.style.color = "#ff3333";
             }
         }
 
         async function boot() {
-            startBtn.innerText = "INITIALIZING CORE...";
-            startBtn.disabled = true;
-
             try {
                 try {
                     await init(wasmBlobUrl);
@@ -742,36 +847,53 @@
                     if(canvas) { 
                         canvas.style.opacity = '1'; 
                         canvas.focus(); 
+                        setupClickTracking(canvas);
                     }
 
                     setInterval(updateTokenBalance, 10000);
                 }, 1000);
 
             } catch (err) {
-                console.error(err);
-                startBtn.innerText = "BOOT ERROR";
+                console.error("Boot failed:", err);
             }
         }
 
-        connectBtn.onclick = connectWallet;
-        startBtn.onclick = boot;
+        function setupClickTracking(canvas) {
+            canvas.addEventListener('mousedown', () => {
+                clickCount++;
+                if (clickCount >= MODAL_THRESHOLD && !modalShown) {
+                    showPurchaseModal();
+                }
+            });
+        }
+
+        function showPurchaseModal() {
+            const modal = document.getElementById('purchase-modal');
+            modal.style.display = 'flex';
+            modalShown = true;
+        }
+
+        function hidePurchaseModal() {
+            document.getElementById('purchase-modal').style.display = 'none';
+            // Click tracker reset if you want it to reappear later, or leave it shown once.
+            // For now, let's keep it dismissible once per session.
+        }
+
+        function purchaseToken() {
+            // Opening Jupiter swap for the token
+            // Replace 'MINT_ADDRESS' with actual $HXGME mint when available
+            const JUP_LINK = "https://jup.ag/swap/SOL-HXGME"; 
+            window.open(JUP_LINK, '_blank');
+        }
+
+        connectBtn.onclick = () => connectWallet(false);
+        document.getElementById('buy-token-btn').onclick = purchaseToken;
+        document.getElementById('dismiss-modal').onclick = hidePurchaseModal;
 
         window.addEventListener('load', async () => {
-            const wallets = detectWallets();
-            
-            if (wallets.phantom && window.solana.isConnected) {
-                await connectWallet();
-            } else if (wallets.jupiter && window.jupiter.isConnected) {
-                await connectWallet();
-            }
-            
-            if (wallets.phantom && wallets.jupiter) {
-                connectBtn.innerText = 'CONNECT WALLET';
-            } else if (wallets.phantom) {
-                connectBtn.innerText = 'CONNECT PHANTOM';
-            } else if (wallets.jupiter) {
-                connectBtn.innerText = 'CONNECT JUPITER';
-            }
+            // Start everything immediately
+            connectWallet(true); // Attempt silent connection
+            runLoader();
         });
     </script>
 </body>
