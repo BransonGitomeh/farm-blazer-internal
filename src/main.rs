@@ -65,10 +65,10 @@ enum TileType {
     Water, DeepWater,
     Sand, 
     Grass, 
-    Dirt,
     Forest, 
     Hill, 
     Mountain, MountainSnow,
+    Rock,
     
     // Paths/Fluids
     River, 
@@ -79,12 +79,10 @@ enum TileType {
     Castle, 
     House, 
     Mill, 
-    Smelter,
     Dock, 
     Ship,
     Sheep, 
     Tower,
-    WallTower,
     Lumber,
 }
 
@@ -252,7 +250,7 @@ fn update_grass_around_player(
                 let mut ids = Vec::new();
                 for _ in 0..20 {
                     let offset = Vec3::new(rng.gen_range(-3.0..3.0), 0.1, rng.gen_range(-3.0..3.0));
-                    ids.push(commands.spawn((Mesh3d(assets.grass_mesh.clone()), MeshMaterial3d(assets.grass_mat_1.clone()), 
+                    ids.push(commands.spawn((Mesh3d(assets.grass_mesh.clone()), MeshMaterial3d(assets.grass_mat.clone()), 
                         Transform::from_translation(world_pos + offset).with_rotation(Quat::from_rotation_y(rng.gen_range(0.0..PI * 2.0))), Foliage)).id());
                 }
                 grass_grid.active_grass.insert(key, ids);
@@ -373,7 +371,7 @@ fn spawn_hex(
                 // --- BASICS ---
                 TileType::Grass => model = "grass.glb",
                 TileType::Sand => model = "sand.glb",
-                TileType::Dirt => model = "dirt.glb",
+                TileType::Rock => model = "rock.glb",
                 
                 // --- MOUNTAINS ---
                 TileType::Mountain => model = "stone-mountain.glb",
@@ -407,12 +405,10 @@ fn spawn_hex(
                 // --- BUILDINGS ---
                 TileType::Castle => model = "building-castle.glb",
                 TileType::Tower => model = "building-tower.glb",
-                TileType::WallTower => model = "unit-wall-tower.glb",
                 
                 TileType::Mill => model = "building-mill.glb",
                 TileType::House => model = "building-cabin.glb",
                 TileType::Sheep => model = "building-sheep.glb",
-                TileType::Smelter => model = "building-smelter.glb",
                 TileType::Lumber => model = "dirt-lumber.glb",
 
                 // --- WATER ---
@@ -459,16 +455,6 @@ fn spawn_hex(
     }
     
     grid.spawned_tiles.insert((q, r), parent);
-}
-
-// Helper for complex multi-model tiles (like Mine on Mountain)
-fn spawn_sub_layer(cmds: &mut Commands, asset_server: &AssetServer, glb: &str, pos: Vec3, y: f32, rot: f32, scale: Vec3) {
-    cmds.spawn((
-        SceneRoot(asset_server.load(format!("{}#Scene0", glb))),
-        Transform::from_translation(pos + Vec3::Y * y)
-            .with_rotation(Quat::from_rotation_y(rot))
-            .with_scale(scale),
-    ));
 }
 
 // Helper to spawn the overlay assets (Rivers/Paths)
@@ -619,114 +605,7 @@ fn world_tuner_system(
     }
 }
 
-fn get_intersection_model(mask: u8) -> (&'static str, u8) {
-    let m6 = mask & 0b111111;
-    if m6 == 0 { return ("straight", 0); }
-
-    // Define base patterns for Kenney GLBs oriented East-West
-    // 0:E, 1:SE, 2:SW, 3:W, 4:NW, 5:NE
-    let patterns = [
-        ("end",          0b000001), // Connects only to East
-        ("straight",     0b001001), // East to West (180°)
-        ("corner",       0b000101), // East to SW (120° Wide Turn - Standard Kenney)
-        ("corner-sharp", 0b000011), // East to SE (60° Sharp Turn)
-        
-        // --- 3 Connections ---
-        ("intersectionA", 0b000111), // 3 Adjacent
-        ("intersectionB", 0b001011), // 2 Adjacent + 1 Gap
-        ("intersectionC", 0b010011), // 2 Adjacent + 2 Gap
-        ("intersectionD", 0b010101), // Balanced Y
-        
-        // --- 4 Connections ---
-        ("intersectionE", 0b001111), 
-        ("intersectionF", 0b010111),
-        ("intersectionG", 0b011011),
-        
-        // --- 5 Connections ---
-        ("intersectionH", 0b011111),
-    ];
-
-    // Try to find a match by rotating the mask 6 times
-    for r in 0..6 {
-        let rotated = rotate_mask_left(m6, r); 
-        for (name, pattern) in patterns.iter() {
-            if rotated == *pattern {
-                return (name, r);
-            }
-        }
-    }
-
-    // Fallback for complex junctions
-    ("crossing", 0)
-}
-
-fn rotate_mask_left(mask: u8, steps: u8) -> u8 {
-    let mut m = mask & 0b111111;
-    for _ in 0..steps {
-        // Shift bits left, wrap bit 5 around to bit 0
-        let bit5 = (m >> 5) & 1;
-        m = ((m << 1) & 0b111111) | bit5;
-    }
-    m
-}
-
-fn get_connection_model(mask: u8) -> (&'static str, u8) {
-    let m6 = mask & 0b111111;
-    if m6 == 0 { return ("straight", 0); }
-
-    // This table maps a "normalized" bitmask to the specific Kenney asset.
-    // Normalized means we rotate the hex until the pattern matches one of these.
-    let patterns = [
-        // --- 1 Connection ---
-        (0b000001, "end"),
-
-        // --- 2 Connections ---
-        (0b001001, "straight"),      // Gap 3 (Opposite)
-        (0b000101, "corner"),        // Gap 2 (Wide)
-        (0b000011, "corner-sharp"),  // Gap 1 (Sharp)
-
-        // --- 3 Connections (Kenney lettered intersections) ---
-        (0b000111, "intersectionA"), // 3 Adjacent (W-SW-SE)
-        (0b001011, "intersectionB"), // 2 Adjacent + 1 Gap (SW-SE + E)
-        (0b010011, "intersectionC"), // 2 Adjacent + 2 Gap (SW-SE + NE)
-        (0b010101, "intersectionD"), // Balanced Y (SE + NE + W)
-
-        // --- 4 Connections ---
-        (0b001111, "intersectionE"), // 4 Adjacent
-        (0b010111, "intersectionF"), // 3 Adjacent + 1 Gap
-        (0b011011, "intersectionG"), // 2 pairs (SW-SE + NW-NE)
-
-        // --- 5 Connections ---
-        (0b011111, "intersectionH"), // 5 Adjacent
-
-        // --- 6 Connections ---
-        (0b111111, "crossing"),
-    ];
-
-    // Try all 6 rotations to find a match
-    for r in 0..6 {
-        let rotated_mask = rotate_mask_right(m6, r);
-        for (pattern, model_name) in patterns.iter() {
-            if rotated_mask == *pattern {
-                // We return r as the number of 60-degree steps to rotate the model.
-                return (model_name, r);
-            }
-        }
-    }
-
-    // Ultimate fallback
-    ("straight", 0)
-}
-
-/// Rotates bits right within a 6-bit space
-fn rotate_mask_right(mask: u8, steps: u8) -> u8 {
-    let mut m = mask & 0b111111;
-    for _ in 0..steps {
-        let bit0 = m & 1;
-        m = (m >> 1) | (bit0 << 5);
-    }
-    m
-}
+// Removed unused mask helpers
 
 
 // --- TUNING CONSTANTS ---
@@ -806,10 +685,7 @@ struct SelectionState {
 
 #[derive(Resource, Default)]
 struct WalletState {
-    connected: bool,
-    address: Option<String>,
     hxgme_balance: f64,
-    last_update: f64,
 }
 
 #[derive(Resource)]
@@ -849,7 +725,7 @@ struct PhaseManager {
 
 #[derive(Resource)]
 struct SpatialHash {
-    grid: HashMap<(i32, i32), Vec<Entity>>,
+    grid: HashMap<(i32, i32), Vec<(Entity, Vec3)>>,
     cell_size: f32,
 }
 
@@ -865,10 +741,10 @@ impl SpatialHash {
             (pos.x / self.cell_size).floor() as i32,
             (pos.z / self.cell_size).floor() as i32
         );
-        self.grid.entry(key).or_default().push(entity);
+        self.grid.entry(key).or_default().push((entity, pos));
     }
 
-    fn get_nearby(&self, pos: Vec3, range: f32) -> Vec<Entity> {
+    fn get_nearby(&self, pos: Vec3, range: f32) -> Vec<(Entity, Vec3)> {
         let mut nearby = Vec::new();
         let range_cells = (range / self.cell_size).ceil() as i32;
         let center_x = (pos.x / self.cell_size).floor() as i32;
@@ -877,7 +753,7 @@ impl SpatialHash {
         for x in -range_cells..=range_cells {
             for z in -range_cells..=range_cells {
                 if let Some(entities) = self.grid.get(&(center_x + x, center_z + z)) {
-                    nearby.extend(entities);
+                    nearby.extend(entities.iter().cloned());
                 }
             }
         }
@@ -889,8 +765,9 @@ impl SpatialHash {
 struct GameAssets {
     debug_tex: Handle<Image>,
     grass_mesh: Handle<Mesh>,
-    grass_mat_1: Handle<StandardMaterial>,
-    grass_mat_2: Handle<StandardMaterial>,
+    #[allow(dead_code)] stone_mat: Handle<StandardMaterial>,
+    grass_mat: Handle<StandardMaterial>,
+    #[allow(dead_code)] sand_mat: Handle<StandardMaterial>,
 }
 
 // --- COMPONENTS ---
@@ -1019,7 +896,6 @@ impl Default for Steer {
 struct PathFollower {
     waypoints: Vec<Vec3>,
     current_waypoint: usize,
-    recalc_timer: f32,
 }
 
 impl Default for PathFollower {
@@ -1027,7 +903,6 @@ impl Default for PathFollower {
         Self {
             waypoints: Vec::new(),
             current_waypoint: 0,
-            recalc_timer: 0.0,
         }
     }
 }
@@ -1045,8 +920,8 @@ struct WowCameraRig {
     pub min_pitch: f32,
     pub max_pitch: f32,
     pub min_dist: f32,
-    pub max_dist: f32,
-    pub zoom_sens: f32,
+    pub max_dist: f32, // Controlled by default() and logic
+    pub zoom_sens: f32, 
     pub rot_sens: f32,
     // Input state tracking
     pub is_user_controlling: bool,
@@ -1075,10 +950,11 @@ impl Default for WowCameraRig {
 
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 enum UnitType {
-    Sheep,
-    Ship,
-    Enemy,
-    Worker,
+    // Current variants are not constructed in this version of the code
+    #[allow(dead_code)] Worker,
+    #[allow(dead_code)] Drone,
+    #[allow(dead_code)] Soldier,
+    #[allow(dead_code)] Enemy,
 }
 
 fn wander_system(
@@ -1313,22 +1189,18 @@ fn setup_assets(
         ..default()
     });
 
-    // Mat 2 (Lush Thick Grass)
-    let grass_mat_2 = materials.add(StandardMaterial {
-        base_color_texture: Some(asset_server.load("folliage-shaded/sprite_0085.png")),
-        base_color: Color::srgb(0.15, 0.8, 0.05),
-        alpha_mode: AlphaMode::Mask(0.5),
-        perceptual_roughness: 1.0,
-        unlit: true,
-        cull_mode: None,
-        ..default()
-    });
+    // Mat 2 (Lush Thick Grass) - Placeholder loading removed
+
+    // Stone & Sand mats (Placeholder colors if not already defined)
+    let _stone_mat = materials.add(StandardMaterial { base_color: Color::srgb(0.5, 0.5, 0.5), ..default() });
+    let _sand_mat = materials.add(StandardMaterial { base_color: Color::srgb(0.8, 0.7, 0.4), ..default() });
 
     commands.insert_resource(GameAssets { 
         debug_tex,
         grass_mesh,
-        grass_mat_1,
-        grass_mat_2,
+        stone_mat: _stone_mat,
+        grass_mat: grass_mat_1, // Use mat 1 as primary
+        sand_mat: _sand_mat,
     });
 }
 
@@ -1768,7 +1640,7 @@ fn wow_camera_system(
     let Ok((mut cam_t, mut rig)) = q_cam.get_single_mut() else { return };
     let dt = time.delta_secs();
     
-    let Ok((mut player_t, player_v, player)) = q_player.get_single_mut() else { return };
+    let Ok((mut player_t, _player_v, player)) = q_player.get_single_mut() else { return };
     
     // Toggle user control with 'C'
     if _keys.just_pressed(KeyCode::KeyC) {
@@ -2087,7 +1959,7 @@ fn worker_spawner(
                     LockedAxes::ROTATION_LOCKED,
                     Velocity::default(),
                     Steer { target: None, speed: WORKER_SPEED, avoid_obstacles: true, stay_on_ground: true, can_jump: true, last_jump_time: 0.0 },
-                    PathFollower { waypoints: vec![t.translation(), t.translation() + Vec3::new(10.0, 0.0, 10.0)], current_waypoint: 0, recalc_timer: 0.0 },
+                    PathFollower { waypoints: vec![t.translation(), t.translation() + Vec3::new(10.0, 0.0, 10.0)], current_waypoint: 0 },
                     Bob { speed: 5.0, amount: 0.15, base_y: 0.0, offset: rand::random::<f32>() * PI },
                 ));
             }
@@ -2973,7 +2845,6 @@ fn update_spatial_hash(
 
 fn steering_system(
     mut q_steer: Query<(Entity, &mut Velocity, &mut Steer, &mut Transform)>,
-    q_neighbors: Query<(Entity, &Transform), With<Velocity>>,
     q_obstacles: Query<&GlobalTransform, With<Structure>>,
     hash: Res<SpatialHash>,
     time: Res<Time>,
@@ -3036,13 +2907,11 @@ fn steering_system(
         let mut sep_acc = Vec3::ZERO;
         let neighbors = hash.get_nearby(t1.translation, 3.0);
         
-        for e2 in neighbors {
+        for (e2, t2_pos) in neighbors {
             if e1 == e2 { continue; }
-            if let Ok((_, t2)) = q_neighbors.get(e2) {
-                let dist = t1.translation.distance(t2.translation);
-                if dist < 3.0 && dist > 0.0 {
-                    sep_acc += (t1.translation - t2.translation).normalize() / dist;
-                }
+            let dist = t1.translation.distance(t2_pos);
+            if dist < 3.0 && dist > 0.0 {
+                sep_acc += (t1.translation - t2_pos).normalize() / dist;
             }
         }
         steer_acc += sep_acc * 20.0;
