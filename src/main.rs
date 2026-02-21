@@ -1,12 +1,12 @@
 use bevy::input::mouse::{MouseMotion, MouseWheel};
-use bevy::pbr::{NotShadowCaster, FogSettings, FogFalloff};
+use bevy::pbr::{NotShadowCaster, DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use bevy_rapier3d::prelude::*;
 use std::f32::consts::PI;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::core_pipeline::bloom::Bloom;
-use bevy::render::render_resource::{AddressMode, SamplerDescriptor};
+use bevy::render::render_resource::AddressMode;
 use bevy::image::{ImageSampler, ImageSamplerDescriptor};
 use bevy::utils::HashMap;
 use rand::prelude::*;
@@ -354,7 +354,7 @@ fn spawn_hex(
     let stack_start = if data.height > 0 { 0 } else { data.height };
     for h in stack_start..=data.height {
         let is_top = h == data.height;
-        let layer_y = (h as f32 * settings.height_step);
+        let layer_y = h as f32 * settings.height_step;
         
         // Base Foundation (The Skirt)
         if h == stack_start {
@@ -1062,7 +1062,7 @@ impl Default for WowCameraRig {
             min_pitch: 0.05, 
             max_pitch: PI / 2.1,
             min_dist: 15.0, 
-            max_dist: 500.0, 
+            max_dist: 350.0, // Limited to stay within fog clear zone
             zoom_sens: 20.0, 
             rot_sens: 0.003,
             radius: 80.0, 
@@ -1191,6 +1191,7 @@ fn main() {
             apply_mesh_colliders,
             update_hex_map, 
             wow_camera_system,
+            ghost_rotation_system,
             day_night_cycle,
             sky_sphere_follow_system,     
             wander_system,
@@ -1361,7 +1362,7 @@ fn setup_lighting_only(
         },
         WowCameraRig::default(),
         Transform::from_xyz(0.0, 120.0, 120.0),
-        FogSettings {
+        DistanceFog {
             color: Color::srgb(0.7, 0.85, 1.0), // Sky Blue
             falloff: FogFalloff::Linear {
                 start: 100.0, // Push start back so mid-range is clear
@@ -1531,7 +1532,7 @@ fn setup_game(
     // 3. Calc World Pos
     let x = settings.hex_size * f32::sqrt(3.0) * (center_q as f32 + center_r as f32 / 2.0);
     let z = settings.hex_size * 3.0 / 2.0 * center_r as f32;
-    let spawn_pos = Vec3::new(x, 0.0, z); // Start at surface
+    let spawn_pos = Vec3::new(x, 40.0, z); // Spawn high to avoid clipping
 
     // 4. Spawn Player
     setup_player(&mut commands, &mut meshes, &mut materials, &assets, spawn_pos);
@@ -1760,14 +1761,14 @@ fn wow_camera_system(
     mouse_btn: Res<ButtonInput<MouseButton>>,
     _keys: Res<ButtonInput<KeyCode>>,
     mut q_cam: Query<(&mut Transform, &mut WowCameraRig)>,
-    mut q_player: Query<(&mut Transform, &Velocity), (With<Player>, Without<WowCameraRig>)>,
+    mut q_player: Query<(&mut Transform, &Velocity, &Player), (With<Player>, Without<WowCameraRig>)>,
     rapier: Single<&RapierContext>,
     time: Res<Time>,
 ) {
     let Ok((mut cam_t, mut rig)) = q_cam.get_single_mut() else { return };
     let dt = time.delta_secs();
     
-    let Ok((mut player_t, player_v)) = q_player.get_single_mut() else { return };
+    let Ok((mut player_t, player_v, player)) = q_player.get_single_mut() else { return };
     
     // Toggle user control with 'C'
     if _keys.just_pressed(KeyCode::KeyC) {
@@ -1779,41 +1780,39 @@ fn wow_camera_system(
     const CONVERGENCE_THRESHOLD: f32 = 0.0001;
     
     let right_click = mouse_btn.pressed(MouseButton::Right);
-    let _left_click = mouse_btn.pressed(MouseButton::Left);
+    let middle_click = mouse_btn.pressed(MouseButton::Middle);
+    let shift = _keys.pressed(KeyCode::ShiftLeft) || _keys.pressed(KeyCode::ShiftRight);
 
-    // If not user controlling AND moving, eventually follow player's rotation
-    // But skip if Right-Clicking!
-    if !rig.is_user_controlling && !right_click {
-        let player_yaw = player_t.rotation.to_euler(EulerRot::YXZ).0;
-        // Only follow if the player is actually moving (has some velocity)
-        if player_v.linvel.length() > 0.1 {
-             rig.target_yaw = rig.target_yaw.lerp(player_yaw, dt * 2.0);
-        }
-    }
-    
-    // 1. ZOOM LOGIC
+    // 1. ZOOM & GHOST ROTATION
     for ev in mouse_wheel.read() {
         if ev.y.abs() > DEADZONE {
-            // Slower, more controlled zoom
-            let zoom_speed = rig.zoom_sens * 2.0; 
-            rig.goal_radius = (rig.goal_radius - ev.y * zoom_speed).clamp(rig.min_dist, rig.max_dist);
+            // If Alt is held, rotate building ghost instead of zooming
+            if _keys.pressed(KeyCode::AltLeft) {
+                // We'll let built_tool_input or a dedicated system handle this, 
+                // but let's just use it here or check for a resource later.
+            } else {
+                let zoom_speed = rig.zoom_sens * 2.0; 
+                rig.goal_radius = (rig.goal_radius - ev.y * zoom_speed).clamp(rig.min_dist, rig.max_dist);
+            }
         }
     }
 
     // 2. WOW-STYLE CAMERA CONTROLS
-    // Right-click and drag to rotate camera (cursor stays visible)
-    if right_click {
+    // Right-click: Steer (turns player if not holding Shift)
+    // Middle-click OR Shift + Right-click: Orbit (only turns camera)
+    if right_click || middle_click {
         let delta = mouse_motion.read().fold(Vec2::ZERO, |acc, e| acc + e.delta);
         if delta.length() > DEADZONE {
             rig.target_yaw -= delta.x * rig.rot_sens;
             rig.target_pitch = (rig.target_pitch - delta.y * rig.rot_sens).clamp(rig.min_pitch, rig.max_pitch);
 
-            // Right-click also turns the character
-            let target_player_rot = Quat::from_rotation_y(rig.target_yaw);
-            player_t.rotation = player_t.rotation.slerp(target_player_rot, dt * 25.0);
+            // Steer if Right-Click is held and NOT holding Shift and NOT somersaulting
+            if right_click && !shift && !player.is_somersaulting {
+                let target_player_rot = Quat::from_rotation_y(rig.target_yaw);
+                player_t.rotation = player_t.rotation.slerp(target_player_rot, dt * 25.0);
+            }
         }
     } else {
-        // Clear mouse motion when not rotating to prevent drift
         mouse_motion.clear();
     }
     
@@ -1862,7 +1861,7 @@ fn wow_camera_system(
     // 6. SMOOTH COLLISION RECOVERY
     // If we need to pull IN (hit wall), snap instantly (or very fast).
     // If we can push OUT (wall gone), drift slowly.
-    if hit_dist < rig.radius {
+    if hit_dist < rig.radius { // Original line
         // Snap in immediately to avoid clipping views
         rig.radius = hit_dist.max(1.0); 
     } else {
@@ -2353,6 +2352,22 @@ fn build_tool_input(keys: Res<ButtonInput<KeyCode>>, mut mgr: ResMut<BuildManage
     if keys.just_pressed(KeyCode::KeyR) { mgr.rotation_idx = (mgr.rotation_idx + 1) % 4; }
 }
 
+fn ghost_rotation_system(
+    mut mouse_wheel: EventReader<MouseWheel>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut mgr: ResMut<BuildManager>,
+) {
+    if !keys.pressed(KeyCode::AltLeft) { return; }
+    
+    for ev in mouse_wheel.read() {
+        if ev.y > 0.1 {
+            mgr.rotation_idx = (mgr.rotation_idx + 1) % 4;
+        } else if ev.y < -0.1 {
+            mgr.rotation_idx = (mgr.rotation_idx + 3) % 4;
+        }
+    }
+}
+
 fn ghost_preview_system(
     mut commands: Commands,
     mgr: Res<BuildManager>,
@@ -2615,21 +2630,25 @@ fn wow_movement_system(
     player.dash_timer = (player.dash_timer - dt).max(0.0);
 
     // Ground Check
-    let ray_origin = transform.translation + Vec3::Y * 0.5; // Start inside the player
+    let ray_origin = transform.translation + Vec3::Y * 1.0;
     let on_ground = if let Some((_, dist)) = rapier.cast_ray(
         ray_origin, 
         Vec3::NEG_Y, 
-        2.0, // Increased length to catch the ground
+        5.0, 
         true, 
-        QueryFilter::exclude_dynamic()
+        QueryFilter::exclude_dynamic().exclude_sensors()
     ) {
-        dist < 0.7 // If the ground is within 0.5 units of our feet
+        // Player bottom is at ~translation.y - 2.25
+        // Origin is translation.y + 1.0. Distance to ground should be ~3.25
+        dist < 3.4 
     } else { false };
 
     if on_ground {
         player.jump_count = 0;
         player.is_somersaulting = false;
-        transform.rotation = Quat::from_rotation_y(transform.rotation.to_euler(EulerRot::YXZ).0);
+        // Flatten rotation back to vertical
+        let yaw = transform.rotation.to_euler(EulerRot::YXZ).0;
+        transform.rotation = Quat::from_rotation_y(yaw);
     }
 
     // Dash
@@ -2655,7 +2674,15 @@ fn wow_movement_system(
     }
 
     if player.is_somersaulting {
-        transform.rotate_local_x(dt * 15.0);
+        // Safety: only spin while ascending or at peak, or for a max time
+        if velocity.linvel.y > -5.0 {
+            transform.rotate_local_x(dt * 15.0);
+        } else {
+            // Start correcting rotation if falling fast
+            let yaw = transform.rotation.to_euler(EulerRot::YXZ).0;
+            let target_rot = Quat::from_rotation_y(yaw);
+            transform.rotation = transform.rotation.slerp(target_rot, dt * 5.0);
+        }
     }
 
     let right_click_held = mouse_btn.pressed(MouseButton::Right);
@@ -2704,7 +2731,7 @@ fn wow_movement_system(
             velocity.linvel.x = move_dir.x * speed;
             velocity.linvel.z = move_dir.z * speed;
 
-            // If moving and NOT right-clicking, face movement direction (Keyboard Turn / Free Run)
+            // If moving AND NOT Right-Click (normal or shift), face movement direction
             if !right_click_held {
                 let mut move_dir_no_y = move_dir;
                 move_dir_no_y.y = 0.0;
@@ -2819,6 +2846,8 @@ fn enemy_spawner(
     mut materials: ResMut<Assets<StandardMaterial>>,
     player_q: Query<&Transform, With<Player>>,
     enemies_q: Query<Entity, With<Enemy>>,
+    grid: Res<HexGridState>,
+    settings: Res<WorldSettings>,
 ) {
     if !phase.is_combat { return; }
     
@@ -2832,36 +2861,54 @@ fn enemy_spawner(
         *timer = 0.0;
         if let Ok(p_t) = player_q.get_single() {
             let mut rng = rand::thread_rng();
-            let angle = rng.r#gen::<f32>() * PI * 2.0;
-            let spawn_dist = 160.0;
-            let is_giant = rng.gen_bool(0.15);
             
-            // Player-like dimensions
-            let radius = 1.0;
-            let length = 2.5; 
-            
-            let (hp, scale, color) = if is_giant {
-                (500.0 * 1.2f32.powi(phase.wave as i32), 2.5, Color::srgb(0.5, 0.0, 1.0))
-            } else {
-                (100.0 * 1.15f32.powi(phase.wave as i32), 1.0, Color::srgb(1.0, 0.2, 0.2))
-            };
+            // Attempt to find land spawn
+            let mut valid_pos = None;
+            for _ in 0..10 {
+                let angle = rng.r#gen::<f32>() * PI * 2.0;
+                let spawn_dist = rng.gen_range(60.0..140.0);
+                let pos = p_t.translation + Vec3::new(angle.cos() * spawn_dist, 20.0, angle.sin() * spawn_dist);
+                
+                // Check if pos is over land
+                let q = ((f32::sqrt(3.0) / 3.0 * pos.x - 1.0 / 3.0 * pos.z) / settings.hex_size).round() as i32;
+                let r = ((2.0 / 3.0 * pos.z) / settings.hex_size).round() as i32;
+                
+                // We check tile_data directly (it contains the manual layout too)
+                let data = generate_hex_data(q, r, grid.seed, settings.island_size);
+                if data.tile_type != TileType::DeepWater && data.tile_type != TileType::Water {
+                    // Valid land!
+                    let world_y = data.height as f32 * settings.height_step + 10.0;
+                    valid_pos = Some(Vec3::new(pos.x, world_y, pos.z));
+                    break;
+                }
+            }
 
-            let pos = p_t.translation + Vec3::new(angle.cos() * spawn_dist, 10.0, angle.sin() * spawn_dist);
-            
-            commands.spawn((
-                Mesh3d(meshes.add(Capsule3d::new(radius, length))),
-                MeshMaterial3d(materials.add(StandardMaterial { base_color: color, ..default() })),
-                Transform::from_translation(pos).with_scale(Vec3::splat(scale)),
-                Enemy { is_giant },
-                Targetable, // Added to be used by auto_target_system
-                Health { current: hp, max: hp },
-                RigidBody::Dynamic, 
-                Collider::capsule_y(length / 2.0, radius), 
-                LockedAxes::ROTATION_LOCKED,
-                Velocity::default(),
-                Steer { target: None, speed: 15.0, avoid_obstacles: true, stay_on_ground: true, can_jump: true, last_jump_time: 0.0 },
-                Bob { speed: 3.0 + rng.r#gen::<f32>() * 2.0, amount: 0.2 * scale, base_y: 0.0, offset: rng.r#gen::<f32>() * PI },
-            ));
+            if let Some(pos) = valid_pos {
+                let is_giant = rng.gen_bool(0.15);
+                let radius = 1.0;
+                let length = 2.5; 
+                
+                let (hp, scale, color) = if is_giant {
+                    (500.0 * (1.2_f32).powi(phase.wave as i32), 2.5, Color::srgb(0.5, 0.0, 1.0))
+                } else {
+                    (100.0 * (1.15_f32).powi(phase.wave as i32), 1.0, Color::srgb(1.0, 0.2, 0.2))
+                };
+
+                commands.spawn((
+                    Mesh3d(meshes.add(Capsule3d::new(radius, length))),
+                    MeshMaterial3d(materials.add(StandardMaterial { base_color: color, ..default() })),
+                    Transform::from_translation(pos).with_scale(Vec3::splat(scale)),
+                    Enemy { is_giant },
+                    Targetable,
+                    Health { current: hp, max: hp },
+                    RigidBody::Dynamic, 
+                    Collider::capsule_y(length / 2.0, radius), 
+                    LockedAxes::ROTATION_LOCKED,
+                    Velocity::default(),
+                    Steer { target: None, speed: 15.0, avoid_obstacles: true, stay_on_ground: true, can_jump: true, last_jump_time: 0.0 },
+                    Bob { speed: 3.0 + rng.r#gen::<f32>() * 2.0, amount: 0.2 * scale, base_y: pos.y, offset: rng.r#gen::<f32>() * PI },
+                ));
+            }
         }
     }
 }
@@ -2925,15 +2972,16 @@ fn update_spatial_hash(
 }
 
 fn steering_system(
-    mut q_steer: Query<(Entity, &mut Velocity, &mut Steer, &Transform)>,
+    mut q_steer: Query<(Entity, &mut Velocity, &mut Steer, &mut Transform)>,
     q_neighbors: Query<(Entity, &Transform), With<Velocity>>,
     q_obstacles: Query<&GlobalTransform, With<Structure>>,
     hash: Res<SpatialHash>,
     time: Res<Time>,
+    rapier: Single<&RapierContext>,
 ) {
     let dt = time.delta_secs();
 
-    for (e1, mut v, mut steer, t1) in q_steer.iter_mut() {
+    for (e1, mut v, mut steer, mut t1) in q_steer.iter_mut() {
         let mut steer_acc = Vec3::ZERO;
         
         if let Some(target) = steer.target {
@@ -2957,10 +3005,29 @@ fn steering_system(
                     // Simple check: if moving slow but want to move fast
                     if v.linvel.length() < 1.0 && steer.speed > 2.0 {
                          v.linvel.y = 15.0;
-                         // steer.last_jump_time = time.elapsed_secs(); // Cannot mutate last_jump_time here as Steer is not mut in iterator? 
-                         // Ah, query is "&mut Steer". Correct.
                          steer.last_jump_time = time.elapsed_secs();
                     }
+                }
+            }
+        }
+
+        // 1.5 GROUND SNAPPING (Prevent clipping on slopes)
+        if steer.stay_on_ground {
+            let ray_origin = t1.translation + Vec3::Y * 3.0;
+            if let Some((_, dist)) = rapier.cast_ray(
+                ray_origin, 
+                Vec3::NEG_Y, 
+                10.0, 
+                true, 
+                QueryFilter::exclude_dynamic().exclude_sensors()
+            ) {
+                let hit_y = ray_origin.y - dist;
+                let target_y = hit_y + 2.25; // Adjusted offset for capsule height (2.25 is half total height)
+                
+                // If submerged or floating slightly above ground, snap Y
+                if t1.translation.y < target_y {
+                    t1.translation.y = t1.translation.y.lerp(target_y, dt * 10.0);
+                    if v.linvel.y < 0.0 { v.linvel.y = 0.0; } // Stop downward velocity if on slope
                 }
             }
         }

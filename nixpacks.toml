@@ -31,13 +31,13 @@ cmds = [
     # This solves the 404 whether the JS looks for farm-blazer.wasm or farm-blazer_bg.wasm
     "cp bin/farm-blazer/out/farm-blazer_bg.wasm bin/farm-blazer/out/farm-blazer.wasm",
 
-    # 8. Copy Assets & HTML
-    "cp -r assets/* bin/farm-blazer/out/assets/",
-    "cp index.html bin/farm-blazer/out/",
+    # 8. Copy Assets & HTML (Preserving structure)
+    "cp -r assets bin/farm-blazer/assets",
+    "cp index.html bin/farm-blazer/index.html",
 
     # 9. PRODUCTION COMPRESSION
     "find bin/farm-blazer/out -type f \\( -name '*.wasm' -o -name '*.js' -o -name '*.html' -o -name '*.glb' \\) -exec brotli --best --keep --force {} +"
 ]
 
 [start]
-cmd = "/app/bin/farm-blazer/server --root /app/bin/farm-blazer/out --host 0.0.0.0 --port ${PORT:-80} --compression-static=true --cache-control-headers=true"
+cmd = "/app/bin/farm-blazer/server --root /app/bin/farm-blazer --host 0.0.0.0 --port ${PORT:-80} --compression-static=true --cache-control-headers=true"
