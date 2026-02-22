@@ -380,21 +380,69 @@
             border-radius: 12px;
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
-            min-width: 220px;
+            min-width: 240px;
             display: none;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            border-left: 4px solid var(--primary);
+            animation: slideInRight 0.5s cubic-bezier(0.17, 0.67, 0.83, 0.67);
+        }
+
+        @keyframes slideInRight {
+            from { transform: translateX(50px); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+
+        .hud-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .glitch-mini {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 2px;
+            color: var(--primary);
+            text-transform: uppercase;
+        }
+
+        .hud-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #ff3333;
+            box-shadow: 0 0 10px #ff3333;
+        }
+
+        .hud-status.online {
+            background: var(--green);
+            box-shadow: 0 0 10px var(--green);
+            animation: ledPulse 2s infinite;
+        }
+
+        @keyframes ledPulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
         }
 
         .hud-row {
             display: flex;
             justify-content: space-between;
             margin: 8px 0;
-            font-size: 0.9rem;
+            font-size: 0.85rem;
         }
 
         .hud-label {
-            color: rgba(255, 255, 255, 0.6);
+            color: rgba(255, 255, 255, 0.5);
             font-weight: 600;
+            font-size: 0.65rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            align-self: center;
         }
 
         .hud-value {
@@ -403,16 +451,61 @@
             font-family: 'Orbitron', sans-serif;
         }
 
+        .hud-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid var(--border);
+        }
+
+        .hud-btn {
+            flex: 1;
+            padding: 10px 5px;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            font-size: 0.65rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+            text-align: center;
+        }
+
+        .hud-btn.connect {
+            background: var(--purple);
+            color: white;
+            box-shadow: 0 4px 15px rgba(153, 69, 255, 0.3);
+        }
+
+        .hud-btn.buy {
+            background: transparent;
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        .hud-btn:hover {
+            transform: translateY(-2px);
+            filter: brightness(1.2);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        .hud-btn:active {
+            transform: translateY(0);
+        }
+
         .buff-badge {
-            display: inline-block;
-            padding: 8px 12px;
+            display: block;
+            padding: 10px;
             margin-top: 12px;
-            background: rgba(255, 215, 0, 0.15);
+            background: rgba(255, 215, 0, 0.1);
             border: 1px solid var(--gold);
-            font-size: 0.75rem;
+            font-size: 0.65rem;
             border-radius: 8px;
             font-weight: 600;
             text-align: center;
+            line-height: 1.4;
+            color: var(--gold);
         }
 
         /* Mobile Optimizations */
@@ -590,14 +683,41 @@
 
     <!-- Commander HUD -->
     <div id="commander-hud">
+        <div class="hud-header">
+            <div class="glitch-mini">NEURAL LINK</div>
+            <div class="hud-status" id="hud-status-led"></div>
+        </div>
+        
         <div class="hud-row">
             <span class="hud-label">WALLET</span>
-            <span class="hud-value" id="hud-address">NOT CONNECTED</span>
+            <span class="hud-value" id="hud-address">DISCONNECTED</span>
         </div>
+        
         <div class="hud-row">
-            <span class="hud-label">HXGME</span>
+            <span class="hud-label">$HXGME</span>
             <span class="hud-value" id="hud-balance">0</span>
         </div>
+
+        <div class="hud-row">
+            <span class="hud-label">SOL</span>
+            <span class="hud-value" id="hud-sol">0.00</span>
+        </div>
+
+        <div class="hud-row">
+            <span class="hud-label">PRICE</span>
+            <span class="hud-value" id="hud-price">$0.00000273</span>
+        </div>
+
+        <div class="hud-row">
+            <span class="hud-label">MCAP</span>
+            <span class="hud-value" id="hud-mcap">$2.7K</span>
+        </div>
+
+        <div class="hud-actions">
+            <button id="hud-connect-btn" class="hud-btn connect">CONNECT</button>
+            <button id="hud-buy-btn" class="hud-btn buy">BUY $HXGME</button>
+        </div>
+
         <div id="hud-buffs"></div>
     </div>
 
@@ -690,17 +810,24 @@
         const bar = document.getElementById('bar');
         const percentTxt = document.getElementById('percent');
         const statusTxt = document.getElementById('status');
+        const hudConnectBtn = document.getElementById('hud-connect-btn');
+        const hudBuyBtn = document.getElementById('hud-buy-btn');
+        const hudStatusLed = document.getElementById('hud-status-led');
         const startBtn = document.getElementById('start-btn');
 
         // State
         let walletConnected = false;
         let walletAddress = null;
         let hxgmeBalance = 0;
+        let solBalance = 0;
         let wasmBlobUrl = null;
         let connectedWalletType = null;
         let clickCount = 0;
         let modalShown = false;
-        const MODAL_THRESHOLD = 50; // Show after 50 clicks
+        const MODAL_THRESHOLD = 50; 
+        const HXGME_MINT = "8p2K9VoAy6bQgh83M1mFrrsuStw5MtEPnLXkyn7cpump";
+        const RPC_ENDPOINT = "https://api.mainnet-beta.solana.com";
+        const solanaConnection = new solanaWeb3.Connection(RPC_ENDPOINT);
 
         // Multi-Wallet Detection
         function detectWallets() {
@@ -761,18 +888,58 @@
         }
 
         async function updateTokenBalance() {
-            hxgmeBalance = Math.floor(Math.random() * 50000);
-            
-            document.getElementById('hud-address').innerText = `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`;
-            document.getElementById('hud-balance').innerText = hxgmeBalance.toLocaleString();
+            if (walletConnected && walletAddress) {
+                try {
+                    const publicKey = new solanaWeb3.PublicKey(walletAddress);
+                    
+                    // Fetch SOL balance
+                    const lamports = await solanaConnection.getBalance(publicKey);
+                    solBalance = lamports / solanaWeb3.LAMPORTS_PER_SOL;
+
+                    // Fetch HXGME balance
+                    const tokenAccounts = await solanaConnection.getParsedTokenAccountsByOwner(publicKey, {
+                        mint: new solanaWeb3.PublicKey(HXGME_MINT)
+                    });
+
+                    if (tokenAccounts.value.length > 0) {
+                        hxgmeBalance = tokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount || 0;
+                    } else {
+                        hxgmeBalance = 0;
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch real balances:", e);
+                }
+            } else {
+                solBalance = 0;
+                hxgmeBalance = 0;
+            }
+
+            // Sync UI
+            const mockPrice = (0.00000273 + (Math.random() - 0.5) * 0.0000001).toFixed(8);
+            const mockMcap = (2.7 + (Math.random() - 0.5) * 0.1).toFixed(1);
+
+            document.getElementById('hud-address').innerText = walletConnected ? `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}` : "DISCONNECTED";
+            document.getElementById('hud-balance').innerText = `${hxgmeBalance.toLocaleString()} $HXGME`;
+            document.getElementById('hud-sol').innerText = `${solBalance.toFixed(3)} SOL`;
+            document.getElementById('hud-price').innerText = `$${mockPrice}`;
+            document.getElementById('hud-mcap').innerText = `$${mockMcap}K`;
+
+            if (walletConnected) {
+                hudStatusLed.classList.add('online');
+                hudConnectBtn.style.display = 'none';
+            } else {
+                hudStatusLed.classList.remove('online');
+                hudConnectBtn.style.display = 'block';
+            }
 
             updateBuffDisplay();
 
             if (window.updateWalletState) {
                 window.updateWalletState({
-                    connected: true,
+                    connected: walletConnected,
                     address: walletAddress,
                     balance: hxgmeBalance,
+                    solBalance: solBalance,
                     walletType: connectedWalletType
                 });
             }
@@ -882,19 +1049,81 @@
             // For now, let's keep it dismissible once per session.
         }
 
-        function purchaseToken() {
-            // Opening Jupiter swap for the token
-            // Replace 'MINT_ADDRESS' with actual $HXGME mint when available
-            const JUP_LINK = "https://jup.ag/swap/SOL-HXGME"; 
-            window.open(JUP_LINK, '_blank');
+        async function purchaseToken() {
+            if (!walletConnected) {
+                connectWallet(false);
+                return;
+            }
+
+            const buyBtn = document.getElementById('hud-buy-btn');
+            const originalText = buyBtn.innerText;
+            buyBtn.innerText = "PREPARING...";
+            buyBtn.disabled = true;
+
+            try {
+                // 1. Get Quote (SOL -> HXGME) 0.1 SOL default for purchase
+                const amount = 0.1 * solanaWeb3.LAMPORTS_PER_SOL;
+                const quoteResponse = await fetch(`https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${HXGME_MINT}&amount=${amount}&slippageBps=100`);
+                const quoteData = await quoteResponse.json();
+
+                if (!quoteData || quoteData.error) throw new Error(quoteData?.error || "Failed to get quote");
+
+                // 2. Get Swap Transaction
+                const swapResponse = await fetch('https://quote-api.jup.ag/v6/swap', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        quoteResponse: quoteData,
+                        userPublicKey: walletAddress,
+                        wrapAndUnwrapSol: true,
+                    })
+                });
+                const { swapTransaction } = await swapResponse.json();
+
+                // 3. Request Signature from Wallet
+                const provider = connectedWalletType === 'phantom' ? window.solana : window.jupiter;
+                if (!provider) throw new Error("Wallet provider not found");
+
+                const transactionBuf = Buffer.from(swapTransaction, 'base64');
+                const transaction = solanaWeb3.VersionedTransaction.deserialize(transactionBuf);
+
+                const { signature } = await provider.signAndSendTransaction(transaction);
+                
+                console.log("Transaction sent:", signature);
+                buyBtn.innerText = "CONFIRMING...";
+
+                // 4. Wait for confirmation
+                const confirmation = await solanaConnection.confirmTransaction(signature);
+                if (confirmation.value.err) throw new Error("Transaction failed");
+
+                buyBtn.innerText = "SUCCESS!";
+                setTimeout(() => {
+                    buyBtn.innerText = originalText;
+                    buyBtn.disabled = false;
+                    updateTokenBalance();
+                }, 3000);
+
+            } catch (err) {
+                console.error("Purchase failed:", err);
+                buyBtn.innerText = "FAILED";
+                buyBtn.style.color = "#ff3333";
+                setTimeout(() => {
+                    buyBtn.innerText = originalText;
+                    buyBtn.disabled = false;
+                    buyBtn.style.color = "";
+                }, 3000);
+            }
         }
 
         connectBtn.onclick = () => connectWallet(false);
+        hudConnectBtn.onclick = () => connectWallet(false);
+        hudBuyBtn.onclick = purchaseToken;
         document.getElementById('buy-token-btn').onclick = purchaseToken;
         document.getElementById('dismiss-modal').onclick = hidePurchaseModal;
 
         window.addEventListener('load', async () => {
             // Start everything immediately
+            updateTokenBalance(); // Initial HUD state
             connectWallet(true); // Attempt silent connection
             runLoader();
         });

@@ -878,6 +878,7 @@ struct Steer {
     pub stay_on_ground: bool,
     pub can_jump: bool,
     pub last_jump_time: f32,
+    pub ground_offset: f32,
 }
 
 impl Default for Steer {
@@ -889,6 +890,7 @@ impl Default for Steer {
             stay_on_ground: true,
             can_jump: true,
             last_jump_time: 0.0,
+            ground_offset: 1.0,
         }
     }
 }
@@ -1488,7 +1490,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(8.0, 8.0, 8.0))),
         MeshMaterial3d(hut_mat),
-        Transform::from_translation(center + Vec3::new(-25.0, 4.0, -25.0)),
+        Transform::from_translation(center + Vec3::new(-12.0, 4.0, -12.0)),
         BuilderHut { spawn_timer: Timer::from_seconds(5.0, TimerMode::Repeating), worker_count: 0, max_workers: 4 },
         Structure, Health { current: 1000.0, max: 1000.0 },
         RigidBody::Fixed, Collider::cuboid(4.0, 4.0, 4.0),
@@ -1496,16 +1498,16 @@ fn setup_starting_village(
 
     // 3. Barracks
     commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(15.0, 10.0, 15.0))),
+        Mesh3d(meshes.add(Cuboid::new(14.0, 10.0, 14.0))),
         MeshMaterial3d(barracks_mat),
-        Transform::from_translation(center + Vec3::new(25.0, 5.0, -25.0)),
+        Transform::from_translation(center + Vec3::new(14.0, 5.0, -14.0)),
         Barracks { timer: Timer::from_seconds(10.0, TimerMode::Repeating), spawn_drone_next: true },
         Structure, Health { current: 1500.0, max: 1500.0 },
-        RigidBody::Fixed, Collider::cuboid(7.5, 5.0, 7.5),
+        RigidBody::Fixed, Collider::cuboid(7.0, 5.0, 7.0),
     ));
 
     // 4. Starting Drills
-    for offset in [Vec3::new(-30.0, 0.0, 20.0), Vec3::new(30.0, 0.0, 20.0)] {
+    for offset in [Vec3::new(-15.0, 0.0, 12.0), Vec3::new(15.0, 0.0, 12.0)] {
         commands.spawn((
             Mesh3d(meshes.add(Cylinder::new(4.0, 8.0))),
             MeshMaterial3d(drill_mat.clone()),
@@ -1955,7 +1957,7 @@ fn worker_spawner(
                     Collider::capsule_y(length / 2.0, radius), 
                     LockedAxes::ROTATION_LOCKED,
                     Velocity::default(),
-                    Steer { target: None, speed: WORKER_SPEED, avoid_obstacles: true, stay_on_ground: true, can_jump: true, last_jump_time: 0.0 },
+                    Steer { target: None, speed: WORKER_SPEED, avoid_obstacles: true, stay_on_ground: true, can_jump: true, last_jump_time: 0.0, ground_offset: 1.6 },
                     PathFollower { waypoints: vec![t.translation(), t.translation() + Vec3::new(10.0, 0.0, 10.0)], current_waypoint: 0 },
                     Bob { speed: 5.0, amount: 0.15, base_y: 0.0, offset: rand::random::<f32>() * PI },
                 ));
@@ -2108,7 +2110,7 @@ fn unit_spawner_system(
                     Health { current: 30.0, max: 30.0 },
                     RigidBody::Dynamic, Collider::ball(0.3), GravityScale(0.0), Damping { linear_damping: 2.0, angular_damping: 1.0 },
                     Velocity::default(),
-                    Steer { speed: 25.0, ..default() },
+                    Steer { speed: 25.0, ground_offset: 0.3, ..default() },
                     Bob { speed: 4.0, amount: 0.3, base_y: spawn_pos.y + 4.0, offset: rand::random::<f32>() * PI },
                 ));
             } else {
@@ -2120,7 +2122,7 @@ fn unit_spawner_system(
                     Health { current: 80.0, max: 80.0 },
                     RigidBody::Dynamic, Collider::capsule_y(0.3, 0.3), LockedAxes::ROTATION_LOCKED,
                     Velocity::default(),
-                    Steer { speed: 22.0, ..default() },
+                    Steer { speed: 22.0, ground_offset: 0.6, ..default() },
                     Bob { speed: 6.0, amount: 0.1, base_y: 0.6, offset: rand::random::<f32>() * PI },
                 ));
             }
@@ -2774,7 +2776,7 @@ fn enemy_spawner(
                     Collider::capsule_y(length / 2.0, radius), 
                     LockedAxes::ROTATION_LOCKED,
                     Velocity::default(),
-                    Steer { target: None, speed: 15.0, avoid_obstacles: true, stay_on_ground: true, can_jump: true, last_jump_time: 0.0 },
+                    Steer { target: None, speed: 15.0, avoid_obstacles: true, stay_on_ground: true, can_jump: true, last_jump_time: 0.0, ground_offset: 0.8 },
                     Bob { speed: 3.0 + rng.r#gen::<f32>() * 2.0, amount: 0.2 * scale, base_y: pos.y, offset: rng.r#gen::<f32>() * PI },
                 ));
             }
@@ -2890,7 +2892,7 @@ fn steering_system(
                 QueryFilter::exclude_dynamic().exclude_sensors()
             ) {
                 let hit_y = ray_origin.y - dist;
-                let target_y = hit_y + 2.25; // Adjusted offset for capsule height (2.25 is half total height)
+                let target_y = hit_y + steer.ground_offset;
                 
                 // If submerged or floating slightly above ground, snap Y
                 if t1.translation.y < target_y {
