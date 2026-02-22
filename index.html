@@ -1258,10 +1258,8 @@
         let clickCount = 0;
         let modalShown = false;
         const MODAL_THRESHOLD = 50; 
-        const HXGME_MINT = "8p2K9VoAy6bQgh83M1mFrrsuStw5MtEPnLXkyn7cpump";
-        const RPC_ENDPOINT = "https://mainnet.helius-rpc.com/?api-key=ee9ffc67-22a1-40e2-aa38-7eef9bccbc61";
-        const JUP_API_KEY = "2f85db8b-76a2-4077-ba70-5bc196871f44";
-        const solanaConnection = new solanaWeb3.Connection(RPC_ENDPOINT);
+        let HXGME_MINT = ""; // Fetched from backend
+        const solanaConnection = new solanaWeb3.Connection(window.location.origin + "/api/rpc");
 
         // Multi-Wallet Detection
         function detectWallets() {
@@ -1555,8 +1553,7 @@
                 setStatus(1, 'GETTING QUOTE...');
                 const amount = Math.floor(0.1 * solanaWeb3.LAMPORTS_PER_SOL);
                 const quoteRes = await fetch(
-                    `https://api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${HXGME_MINT}&amount=${amount}&slippageBps=300`,
-                    { headers: { 'x-api-key': JUP_API_KEY } }
+                    `/api/jupiter/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${HXGME_MINT}&amount=${amount}&slippageBps=300`
                 );
                 if (!quoteRes.ok) throw { step: 1, label: 'GET QUOTE', reason: `HTTP ${quoteRes.status}` };
                 const quoteData = await quoteRes.json();
@@ -1564,9 +1561,9 @@
 
                 // Step 2: Build swap transaction
                 setStatus(2, 'BUILDING SWAP TX...');
-                const swapRes = await fetch('https://api.jup.ag/swap/v1/swap', {
+                const swapRes = await fetch('/api/jupiter/swap/v1/swap', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'x-api-key': JUP_API_KEY },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         quoteResponse: quoteData,
                         userPublicKey: walletAddress,
@@ -1848,6 +1845,12 @@
         document.getElementById('dismiss-modal').onclick = hidePurchaseModal;
 
         window.addEventListener('load', async () => {
+            // Fetch secure config
+            try {
+                const cfg = await fetch('/api/config').then(r => r.json());
+                HXGME_MINT = cfg.HXGME_MINT;
+            } catch(e) { console.error("Config fetch failed", e); }
+
             updateTokenBalance();
             connectWallet(true);
             runLoader();

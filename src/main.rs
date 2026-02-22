@@ -1482,7 +1482,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(12.0, 8.0, 12.0))),
         MeshMaterial3d(storage_mat),
-        Transform::from_translation(center + Vec3::Y * 6.8), // half-height(4) + surface lift
+        Transform::from_translation(center + Vec3::Y * 12.8), // Adjusted: 6.8 -> 12.8
         StorageBin, Structure, Health { current: 2000.0, max: 2000.0 },
         RigidBody::Fixed, Collider::cuboid(6.0, 4.0, 6.0),
     ));
@@ -1491,7 +1491,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(8.0, 8.0, 8.0))),
         MeshMaterial3d(hut_mat),
-        Transform::from_translation(center + Vec3::new(-12.0, 6.8, -12.0)),
+        Transform::from_translation(center + Vec3::new(-12.0, 12.8, -12.0)), // Adjusted: 6.8 -> 12.8
         BuilderHut { spawn_timer: Timer::from_seconds(5.0, TimerMode::Repeating), worker_count: 0, max_workers: 4 },
         Structure, Health { current: 1000.0, max: 1000.0 },
         RigidBody::Fixed, Collider::cuboid(4.0, 4.0, 4.0),
@@ -1501,7 +1501,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(14.0, 10.0, 14.0))),
         MeshMaterial3d(barracks_mat),
-        Transform::from_translation(center + Vec3::new(14.0, 7.8, -14.0)),
+        Transform::from_translation(center + Vec3::new(14.0, 13.8, -14.0)), // Adjusted: 7.8 -> 13.8
         Barracks { timer: Timer::from_seconds(10.0, TimerMode::Repeating), spawn_drone_next: true },
         Structure, Health { current: 1500.0, max: 1500.0 },
         RigidBody::Fixed, Collider::cuboid(7.0, 5.0, 7.0),
@@ -1512,7 +1512,7 @@ fn setup_starting_village(
         commands.spawn((
             Mesh3d(meshes.add(Cylinder::new(4.0, 8.0))),
             MeshMaterial3d(drill_mat.clone()),
-            Transform::from_translation(center + offset + Vec3::Y * 6.8),
+            Transform::from_translation(center + offset + Vec3::Y * 12.8), // Adjusted: 6.8 -> 12.8
             Drill { timer: Timer::from_seconds(4.0, TimerMode::Repeating), storage: 0 },
             Structure, Health { current: 600.0, max: 600.0 },
             RigidBody::Fixed, Collider::cylinder(4.0, 4.0),
@@ -1958,7 +1958,7 @@ fn worker_spawner(
                     Collider::capsule_y(length / 2.0, radius), 
                     LockedAxes::ROTATION_LOCKED,
                     Velocity::default(),
-                    Steer { target: None, speed: WORKER_SPEED, avoid_obstacles: true, stay_on_ground: true, can_jump: true, last_jump_time: 0.0, ground_offset: 1.6 },
+                    Steer { target: None, speed: WORKER_SPEED, avoid_obstacles: true, stay_on_ground: true, can_jump: true, last_jump_time: 0.0, ground_offset: 0.8 },
                     PathFollower { waypoints: vec![t.translation(), t.translation() + Vec3::new(10.0, 0.0, 10.0)], current_waypoint: 0 },
                     Bob { speed: 5.0, amount: 0.15, base_y: 0.0, offset: rand::random::<f32>() * PI },
                 ));
