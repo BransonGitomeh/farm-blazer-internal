@@ -1261,6 +1261,144 @@
         let HXGME_MINT = ""; // Fetched from backend
         const solanaConnection = new solanaWeb3.Connection(window.location.origin + "/api/rpc");
 
+        // --- MULTIPLAYER NETWORKING (HIGH PERF) ---
+        const myPlayerId = Math.random().toString(36).substring(7);
+        let ws = null;
+        let remotePlayers = new Map(); // id -> { buffer: [], lastUpdate: Date.now() }
+        
+        const textEncoder = new TextEncoder();
+        const textDecoder = new TextDecoder();
+
+        function initNetworking() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${window.location.host}`);
+            ws.binaryType = "arraybuffer";
+            
+            ws.onopen = () => {
+                ws.send(JSON.stringify({ type: 'hello', id: myPlayerId }));
+            };
+
+            ws.onmessage = (event) => {
+                let data;
+                if (event.data instanceof ArrayBuffer) {
+                    // Optimized binary unpack
+                    const view = new DataView(event.data);
+                    const idLen = view.getUint8(0);
+                    const idBytes = new Uint8Array(event.data, 1, idLen);
+                    const id = textDecoder.decode(idBytes);
+                    if (id === myPlayerId) return; // Skip echo if relay sent it
+                    data = {
+                        id,
+                        x: view.getFloat32(1 + idLen, true),
+                        y: view.getFloat32(5 + idLen, true),
+                        z: view.getFloat32(9 + idLen, true),
+                        ry: view.getFloat32(13 + idLen, true)
+                    };
+                } else {
+                    data = JSON.parse(event.data);
+                }
+
+                if (data.type === 'move' || !data.type) {
+                    const id = data.id;
+                    if (!remotePlayers.has(id)) {
+                        remotePlayers.set(id, { buffer: [], lastSeen: Date.now() });
+                    }
+                    const p = remotePlayers.get(id);
+                    p.lastSeen = Date.now();
+                    p.buffer.push({ 
+                        t: Date.now(), 
+                        pos: [data.x, data.y, data.z], 
+                        rot: data.ry 
+                    });
+                    if (p.buffer.length > 20) p.buffer.shift();
+                } else if (data.type === 'remove') {
+                    remotePlayers.delete(data.id);
+                }
+            };
+        }
+
+        // Bridge function exposed to Bevy
+        window.getMultiplayerState = () => {
+            const now = Date.now() - 100; // 100ms interpolation delay
+            const results = {};
+
+            function lerpAngle(a, b, f) {
+                let diff = (b - a) % (Math.PI * 2);
+                if (diff > Math.PI) diff -= Math.PI * 2;
+                if (diff < -Math.PI) diff += Math.PI * 2;
+                return a + diff * f;
+            }
+
+            remotePlayers.forEach((data, id) => {
+                if (data.buffer.length < 2) return;
+                
+                // 1. Find two points to interpolate between
+                let left = null;
+                let right = null;
+                for (let i = 0; i < data.buffer.length - 1; i++) {
+                    if (data.buffer[i].t <= now && data.buffer[i+1].t >= now) {
+                        left = data.buffer[i];
+                        right = data.buffer[i+1];
+                        break;
+                    }
+                }
+
+                if (left && right) {
+                    // --- INTERPOLATION ---
+                    const f = (now - left.t) / (right.t - left.t);
+                    results[id] = {
+                        x: left.pos[0] + (right.pos[0] - left.pos[0]) * f,
+                        y: left.pos[1] + (right.pos[1] - left.pos[1]) * f,
+                        z: left.pos[2] + (right.pos[2] - left.pos[2]) * f,
+                        ry: lerpAngle(left.rot, right.rot, f)
+                    };
+                } else {
+                    // --- EXTRAPOLATION (Handling packet loss) ---
+                    const last = data.buffer[data.buffer.length - 1];
+                    const prev = data.buffer[data.buffer.length - 2];
+                    const gap = Date.now() - last.t;
+
+                    if (gap < 500) { // Max 500ms extrapolation
+                        const dt = last.t - prev.t;
+                        if (dt > 0) {
+                            const f = gap / dt;
+                            results[id] = {
+                                x: last.pos[0] + (last.pos[0] - prev.pos[0]) * f,
+                                y: last.pos[1] + (last.pos[1] - prev.pos[1]) * f,
+                                z: last.pos[2] + (last.pos[2] - prev.pos[2]) * f,
+                                ry: last.rot // Keep rotation for extrapolation to avoid spinning
+                            };
+                        } else {
+                            results[id] = { x: last.pos[0], y: last.pos[1], z: last.pos[2], ry: last.rot };
+                        }
+                    } else if (gap < 2000) {
+                         // Still visible, but stationary
+                         results[id] = { x: last.pos[0], y: last.pos[1], z: last.pos[2], ry: last.rot };
+                    } else {
+                         // Timeout
+                         remotePlayers.delete(id);
+                    }
+                }
+            });
+            return results;
+        };
+
+        window.reportLocalPlayer = (x, y, z, ry) => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                // Optimized binary pack
+                const idBytes = textEncoder.encode(myPlayerId);
+                const buf = new ArrayBuffer(1 + idBytes.length + 16);
+                const view = new DataView(buf);
+                view.setUint8(0, idBytes.length);
+                for(let i=0; i<idBytes.length; i++) view.setUint8(1 + i, idBytes[i]);
+                view.setFloat32(1 + idBytes.length, x, true);
+                view.setFloat32(5 + idBytes.length, y, true);
+                view.setFloat32(9 + idBytes.length, z, true);
+                view.setFloat32(13 + idBytes.length, ry, true);
+                ws.send(buf);
+            }
+        };
+
         // Multi-Wallet Detection
         function detectWallets() {
             return {
@@ -1851,6 +1989,7 @@
                 HXGME_MINT = cfg.HXGME_MINT;
             } catch(e) { console.error("Config fetch failed", e); }
 
+            initNetworking();
             updateTokenBalance();
             connectWallet(true);
             runLoader();

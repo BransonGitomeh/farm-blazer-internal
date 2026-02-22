@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const https = require('https');
+const { WebSocketServer } = require('ws');
 
 const PORT = 8080;
 
@@ -11,6 +12,9 @@ const SECRETS = {
     RPC_ENDPOINT: "https://mainnet.helius-rpc.com/?api-key=ee9ffc67-22a1-40e2-aa38-7eef9bccbc61",
     JUP_API_KEY: "2f85db8b-76a2-4077-ba70-5bc196871f44"
 };
+
+// MULTIPLAYER STATE
+const players = new Map(); // id -> state object
 
 const MIME_TYPES = {
     '.html': 'text/html',
@@ -97,6 +101,55 @@ const server = http.createServer((req, res) => {
                 'Expires': '0'
             });
             res.end(content, 'utf-8');
+        }
+    });
+});
+
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', (ws) => {
+    let playerId = null;
+
+    ws.on('message', (message, isBinary) => {
+        if (isBinary) {
+            // High-perf binary relay for move updates
+            wss.clients.forEach(client => {
+                if (client !== ws && client.readyState === 1) {
+                    client.send(message, { binary: true });
+                }
+            });
+            return;
+        }
+
+        try {
+            const data = JSON.parse(message);
+            if (data.type === 'hello') {
+                playerId = data.id;
+                console.log(`[NET] Player ${playerId} joined`);
+            } else if (data.type === 'move') {
+                // Fallback JSON move (optional, we'll prefer binary)
+                wss.clients.forEach(client => {
+                    if (client !== ws && client.readyState === 1) {
+                        client.send(message);
+                    }
+                });
+            }
+        } catch (e) {
+            console.error("[NET] Error parsing message:", e);
+        }
+    });
+
+    ws.on('close', () => {
+        if (playerId) {
+            console.log(`[NET] Player ${playerId} left`);
+            players.delete(playerId);
+            // Notify others
+            const msg = JSON.stringify({ type: 'remove', id: playerId });
+            wss.clients.forEach(client => {
+                if (client !== ws && client.readyState === 1) {
+                    client.send(msg);
+                }
+            });
         }
     });
 });

@@ -13,6 +13,19 @@ use rand::prelude::*;
 use bevy::asset::AssetMetaCheck;
 use bevy::render::mesh::SphereKind;
 
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_name = getMultiplayerState)]
+    fn get_multiplayer_state() -> JsValue;
+
+    #[wasm_bindgen(js_name = reportLocalPlayer)]
+    fn report_local_player(x: f32, y: f32, z: f32, ry: f32);
+}
+
 mod mobile_controls;
 mod noise;
 
@@ -826,6 +839,11 @@ struct Worker {
 }
 
 #[derive(Component)]
+struct RemotePlayer {
+    id: String,
+}
+
+#[derive(Component)]
 struct CarryingVisual; // Child entity of worker
 
 #[derive(Component)]
@@ -1116,6 +1134,8 @@ fn main() {
             enemy_ai,
             enemy_jump_system,
             restart_game_system, // Allow restarting anytime
+            multiplayer_sync_system,
+            report_local_player_system,
         ).run_if(in_state(GameState::Playing)))
         .add_systems(Update, restart_game_system.run_if(in_state(GameState::GameOver)))
         .run();
@@ -3240,5 +3260,95 @@ fn spawn_dust_burst(commands: &mut Commands, meshes: &mut Assets<Mesh>, material
             },
             NotShadowCaster,
         ));
+    }
+}
+
+fn multiplayer_sync_system(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut remote_players: Query<(Entity, &mut Transform, &RemotePlayer)>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+    #[cfg(target_arch = "wasm32")]
+    {
+        let state = get_multiplayer_state();
+        if state.is_undefined() || state.is_null() { return; }
+
+        let players_obj: js_sys::Object = state.into();
+        let keys = js_sys::Object::keys(&players_obj);
+
+        let mut active_ids = std::collections::HashSet::new();
+
+        for i in 0..keys.length() {
+            let key_val = keys.get(i);
+            let Some(key) = key_val.as_string() else { continue };
+            active_ids.insert(key.clone());
+
+            let val = js_sys::Reflect::get(&players_obj, &key.clone().into()).unwrap();
+            let val_obj: js_sys::Object = val.into();
+
+            let x = js_sys::Reflect::get(&val_obj, &"x".into()).unwrap().as_f64().unwrap_or(0.0) as f32;
+            let y = js_sys::Reflect::get(&val_obj, &"y".into()).unwrap().as_f64().unwrap_or(0.0) as f32;
+            let z = js_sys::Reflect::get(&val_obj, &"z".into()).unwrap().as_f64().unwrap_or(0.0) as f32;
+            let ry = js_sys::Reflect::get(&val_obj, &"ry".into()).unwrap().as_f64().unwrap_or(0.0) as f32;
+
+            // Find or spawn
+            let mut found = false;
+            for (_, mut trans, remote) in remote_players.iter_mut() {
+                if remote.id == key {
+                    let target_pos = Vec3::new(x, y, z);
+                    let target_rot = Quat::from_rotation_y(ry);
+                    
+                    // Sub-frame smoothing
+                    trans.translation = trans.translation.lerp(target_pos, dt * 15.0);
+                    trans.rotation = trans.rotation.slerp(target_rot, dt * 15.0);
+                    
+                    found = true;
+                    break;
+                }
+            }
+
+            if !found {
+                commands.spawn((
+                    Mesh3d(meshes.add(Capsule3d::new(1.0, 2.5))),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: Color::srgba(0.0, 1.0, 1.0, 0.4),
+                        alpha_mode: AlphaMode::Blend,
+                        emissive: LinearRgba::new(0.0, 2.0, 2.0, 1.0),
+                        ..default()
+                    })),
+                    Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(ry)),
+                    RemotePlayer { id: key },
+                ));
+            }
+        }
+
+        // Despawn players who left
+        for (entity, _, remote) in remote_players.iter() {
+            if !active_ids.contains(&remote.id) {
+                commands.entity(entity).despawn_recursive();
+            }
+        }
+    }
+}
+
+fn report_local_player_system(
+    player_q: Query<&Transform, With<crate::Player>>,
+    time: Res<Time>,
+    mut last_report: Local<f32>,
+) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Limit report rate to ~30Hz
+        if time.elapsed_secs() - *last_report < 0.033 { return; }
+        *last_report = time.elapsed_secs();
+
+        if let Ok(transform) = player_q.get_single() {
+            let pos = transform.translation;
+            let ry = transform.rotation.to_euler(EulerRot::YXZ).0;
+            report_local_player(pos.x, pos.y, pos.z, ry);
+        }
     }
 }
