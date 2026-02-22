@@ -244,12 +244,13 @@ fn update_grass_around_player(
         if grass_grid.active_grass.contains_key(&key) { continue; }
         if let Some(data) = grid_state.tile_data.get(&key) {
             if data.height >= 0 && data.tile_type == TileType::Grass {
+                let base_y = data.height as f32 * settings.height_step + 0.8; // Small offset for top of hex
                 let world_pos = Vec3::new(settings.hex_size * f32::sqrt(3.0) * (key.0 as f32 + key.1 as f32 / 2.0), 
-                                          data.height as f32 * settings.height_step, 
+                                          base_y, 
                                           settings.hex_size * 1.5 * key.1 as f32);
                 let mut ids = Vec::new();
                 for _ in 0..20 {
-                    let offset = Vec3::new(rng.gen_range(-3.0..3.0), 0.1, rng.gen_range(-3.0..3.0));
+                    let offset = Vec3::new(rng.gen_range(-3.0..3.0), 0.05, rng.gen_range(-3.0..3.0));
                     ids.push(commands.spawn((Mesh3d(assets.grass_mesh.clone()), MeshMaterial3d(assets.grass_mat.clone()), 
                         Transform::from_translation(world_pos + offset).with_rotation(Quat::from_rotation_y(rng.gen_range(0.0..PI * 2.0))), Foliage)).id());
                 }
@@ -1118,24 +1119,17 @@ fn main() {
         .run();
 }
 
-fn bob_system(time: Res<Time>, mut q: Query<(&mut Transform, &Bob), With<RigidBody>>) {
+fn bob_system(time: Res<Time>, mut q: Query<(&mut Transform, &Bob, Option<&RigidBody>)>) {
     let t = time.elapsed_secs();
-    for (mut transform, bob) in q.iter_mut() {
-        // Use base_y to keep them grounded, adding the sine wave as an offset
-        let offset = (t * bob.speed + bob.offset).sin() * bob.amount;
-        
-        // Ensure we don't clip through ground (only bob UP from base)
-        let final_y = bob.base_y + offset.abs(); 
-        
-        // Soft merge with current physics Y if dynamic? 
-        // Actually, for RigidBody::Dynamic, direct translation set fights physics.
-        // But for visual bobbing of floating items (Powerups), this is fine.
-        // For Units (Capsules), we shouldn't be bobbing their TRANSFORM if they have physics.
-        // We should bob their MESH child.
-        // However, the current setup puts Bob on the root. 
-        // Let's check if it has a RigidBody.
+    for (mut transform, bob, rb) in q.iter_mut() {
+        // If it's a dynamic body, don't force Y. Let physics/steering handle it.
+        // We only bob kinematic, fixed or non-physics objects.
+        if let Some(RigidBody::Dynamic) = rb {
+            continue;
+        }
 
-        transform.translation.y = final_y;
+        let offset = (t * bob.speed + bob.offset).sin() * bob.amount;
+        transform.translation.y = bob.base_y + offset.abs(); 
     }
 }
 
@@ -1398,19 +1392,22 @@ fn setup_game(
         info!("Spawn found at {}, {}", center_q, center_r);
     }
 
-    // Insert grid resource so it persists
-    commands.insert_resource(grid);
-
     // 3. Calc World Pos
+    let data = generate_hex_data(center_q, center_r, grid.seed, settings.island_size);
+    let target_height = data.height as f32 * settings.height_step;
+
     let x = settings.hex_size * f32::sqrt(3.0) * (center_q as f32 + center_r as f32 / 2.0);
     let z = settings.hex_size * 3.0 / 2.0 * center_r as f32;
-    let spawn_pos = Vec3::new(x, 40.0, z); // Spawn high to avoid clipping
+    let spawn_pos = Vec3::new(x, target_height + 40.0, z); // Spawn high above the ACTUAL terrain height
+
+    // Insert grid resource so it persists
+    commands.insert_resource(grid);
 
     // 4. Spawn Player
     setup_player(&mut commands, &mut meshes, &mut materials, &assets, spawn_pos);
 
     // 5. Spawn Village
-    setup_starting_village(&mut commands, &mut meshes, &mut materials, spawn_pos);
+    setup_starting_village(&mut commands, &mut meshes, &mut materials, Vec3::new(x, target_height, z));
 
     // 6. Spawn Large Water Plane (Sea Level)
     commands.spawn((
@@ -1482,7 +1479,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(12.0, 8.0, 12.0))),
         MeshMaterial3d(storage_mat),
-        Transform::from_translation(center.with_y(4.0)), // Sit on ground (y=0 is surface)
+        Transform::from_translation(center + Vec3::Y * 4.0), // center is already at ground height
         StorageBin, Structure, Health { current: 2000.0, max: 2000.0 },
         RigidBody::Fixed, Collider::cuboid(6.0, 4.0, 6.0),
     ));
@@ -1491,7 +1488,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(8.0, 8.0, 8.0))),
         MeshMaterial3d(hut_mat),
-        Transform::from_translation(center.with_y(4.0) + Vec3::new(-25.0, 0.0, -25.0)),
+        Transform::from_translation(center + Vec3::new(-25.0, 4.0, -25.0)),
         BuilderHut { spawn_timer: Timer::from_seconds(5.0, TimerMode::Repeating), worker_count: 0, max_workers: 4 },
         Structure, Health { current: 1000.0, max: 1000.0 },
         RigidBody::Fixed, Collider::cuboid(4.0, 4.0, 4.0),
@@ -1501,7 +1498,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(15.0, 10.0, 15.0))),
         MeshMaterial3d(barracks_mat),
-        Transform::from_translation(center.with_y(5.0) + Vec3::new(25.0, 0.0, -25.0)),
+        Transform::from_translation(center + Vec3::new(25.0, 5.0, -25.0)),
         Barracks { timer: Timer::from_seconds(10.0, TimerMode::Repeating), spawn_drone_next: true },
         Structure, Health { current: 1500.0, max: 1500.0 },
         RigidBody::Fixed, Collider::cuboid(7.5, 5.0, 7.5),
@@ -1512,7 +1509,7 @@ fn setup_starting_village(
         commands.spawn((
             Mesh3d(meshes.add(Cylinder::new(4.0, 8.0))),
             MeshMaterial3d(drill_mat.clone()),
-            Transform::from_translation(center.with_y(4.0) + offset),
+            Transform::from_translation(center + offset + Vec3::Y * 4.0),
             Drill { timer: Timer::from_seconds(4.0, TimerMode::Repeating), storage: 0 },
             Structure, Health { current: 600.0, max: 600.0 },
             RigidBody::Fixed, Collider::cylinder(4.0, 4.0),
@@ -1950,8 +1947,8 @@ fn worker_spawner(
                 commands.spawn((
                     Mesh3d(worker_mesh.clone()),
                     MeshMaterial3d(worker_mat.clone()),
-                    // Spawn at half-height above the hut's surface
-                    Transform::from_translation(t.translation() + Vec3::Y * 2.0),
+                    // Spawn high above the hut to drop down
+                    Transform::from_translation(t.translation() + Vec3::Y * 15.0),
                     Worker { carrying: false, target_drill: None, target_storage: None },
                     Health { current: 50.0, max: 50.0 },
                     RigidBody::Dynamic, 
@@ -2749,7 +2746,7 @@ fn enemy_spawner(
                 let data = generate_hex_data(q, r, grid.seed, settings.island_size);
                 if data.tile_type != TileType::DeepWater && data.tile_type != TileType::Water {
                     // Valid land!
-                    let world_y = data.height as f32 * settings.height_step + 10.0;
+                    let world_y = data.height as f32 * settings.height_step + 40.0;
                     valid_pos = Some(Vec3::new(pos.x, world_y, pos.z));
                     break;
                 }
