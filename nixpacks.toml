@@ -8,7 +8,6 @@ cmds = [
     
     # 1. Prepare Directory Structure
     "mkdir -p bin/farm-blazer",
-    "mkdir -p bin/farm-blazer/assets",
 
     # 2. Download Tools
     "curl -L https://github.com/rustwasm/wasm-bindgen/releases/download/0.2.106/wasm-bindgen-0.2.106-x86_64-unknown-linux-musl.tar.gz | tar xz",
@@ -31,7 +30,7 @@ cmds = [
     "cp bin/farm-blazer/farm-blazer_bg.wasm bin/farm-blazer/farm-blazer.wasm",
 
     # 8. Copy Assets & HTML (Preserving structure)
-    "cp -r assets bin/farm-blazer/assets",
+    "cp -r assets bin/farm-blazer/",
     "cp index.html bin/farm-blazer/index.html",
 
     # 9. PRODUCTION COMPRESSION
