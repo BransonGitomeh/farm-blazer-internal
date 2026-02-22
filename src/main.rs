@@ -383,19 +383,19 @@ fn spawn_hex(
                 TileType::River => {
                     let mask = calculate_neighbor_mask(q, r, &grid.tile_data, TileType::River);
                     let (m_name, rot) = get_kenney_connection_model(mask, "river");
-                    spawn_custom_model(commands, asset_server, &m_name, pos, layer_y - 0.2, rot, settings.tile_scale);
+                    spawn_custom_model(commands, asset_server, &m_name, pos, layer_y + 0.6, rot, settings.tile_scale);
                     model = "grass.glb"; // Underlay
                 }
                 TileType::Path => {
                     let mask = calculate_neighbor_mask(q, r, &grid.tile_data, TileType::Path);
                     let (m_name, rot) = get_kenney_connection_model(mask, "path");
-                    spawn_custom_model(commands, asset_server, &m_name, pos, layer_y + 0.05, rot, settings.tile_scale);
+                    spawn_custom_model(commands, asset_server, &m_name, pos, layer_y + 0.85, rot, settings.tile_scale);
                     model = "grass.glb"; // Underlay
                 }
                 TileType::Bridge => {
                     model = "bridge.glb";
                     rotation = PI / 2.0; 
-                    spawn_custom_model(commands, asset_server, "river-straight", pos, layer_y - 0.2, 0.0, settings.tile_scale);
+                    spawn_custom_model(commands, asset_server, "river-straight", pos, layer_y + 0.6, 0.0, settings.tile_scale);
                     // Underlay grass
                     commands.spawn((
                         SceneRoot(asset_server.load("grass.glb#Scene0")),
@@ -428,7 +428,7 @@ fn spawn_hex(
                 }
                 TileType::Forest => {
                     model = "grass.glb"; 
-                    spawn_custom_model(commands, asset_server, "unit-tree", pos, layer_y, rand::random::<f32>() * 6.0, settings.tile_scale * 1.2);
+                    spawn_custom_model(commands, asset_server, "unit-tree", pos, layer_y + 0.8, rand::random::<f32>() * 6.0, settings.tile_scale * 1.2);
                 }
                 
                 TileType::DeepWater => {
@@ -1481,7 +1481,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(12.0, 8.0, 12.0))),
         MeshMaterial3d(storage_mat),
-        Transform::from_translation(center + Vec3::Y * 4.0), // center is already at ground height
+        Transform::from_translation(center + Vec3::Y * 4.8), // center is at hex base, add 4.0 height + 0.8 hex surface
         StorageBin, Structure, Health { current: 2000.0, max: 2000.0 },
         RigidBody::Fixed, Collider::cuboid(6.0, 4.0, 6.0),
     ));
@@ -1490,7 +1490,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(8.0, 8.0, 8.0))),
         MeshMaterial3d(hut_mat),
-        Transform::from_translation(center + Vec3::new(-12.0, 4.0, -12.0)),
+        Transform::from_translation(center + Vec3::new(-12.0, 4.8, -12.0)),
         BuilderHut { spawn_timer: Timer::from_seconds(5.0, TimerMode::Repeating), worker_count: 0, max_workers: 4 },
         Structure, Health { current: 1000.0, max: 1000.0 },
         RigidBody::Fixed, Collider::cuboid(4.0, 4.0, 4.0),
@@ -1500,7 +1500,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(14.0, 10.0, 14.0))),
         MeshMaterial3d(barracks_mat),
-        Transform::from_translation(center + Vec3::new(14.0, 5.0, -14.0)),
+        Transform::from_translation(center + Vec3::new(14.0, 5.8, -14.0)),
         Barracks { timer: Timer::from_seconds(10.0, TimerMode::Repeating), spawn_drone_next: true },
         Structure, Health { current: 1500.0, max: 1500.0 },
         RigidBody::Fixed, Collider::cuboid(7.0, 5.0, 7.0),
@@ -1511,7 +1511,7 @@ fn setup_starting_village(
         commands.spawn((
             Mesh3d(meshes.add(Cylinder::new(4.0, 8.0))),
             MeshMaterial3d(drill_mat.clone()),
-            Transform::from_translation(center + offset + Vec3::Y * 4.0),
+            Transform::from_translation(center + offset + Vec3::Y * 4.8),
             Drill { timer: Timer::from_seconds(4.0, TimerMode::Repeating), storage: 0 },
             Structure, Health { current: 600.0, max: 600.0 },
             RigidBody::Fixed, Collider::cylinder(4.0, 4.0),
@@ -2894,10 +2894,18 @@ fn steering_system(
                 let hit_y = ray_origin.y - dist;
                 let target_y = hit_y + steer.ground_offset;
                 
-                // If submerged or floating slightly above ground, snap Y
-                if t1.translation.y < target_y {
-                    t1.translation.y = t1.translation.y.lerp(target_y, dt * 10.0);
-                    if v.linvel.y < 0.0 { v.linvel.y = 0.0; } // Stop downward velocity if on slope
+                // Lerp towards ground (up or down)
+                // We use a high lerp factor but only if not deliberately flying/jumping high above
+                let current_y = t1.translation.y;
+                let diff = (current_y - target_y).abs();
+                
+                if diff > 0.1 && diff < 5.0 {
+                    t1.translation.y = current_y.lerp(target_y, dt * 15.0);
+                    if v.linvel.y < 0.0 && current_y <= target_y + 0.1 { v.linvel.y = 0.0; }
+                } else if current_y < target_y {
+                    // Fallback: forcefully pop up if submerged
+                    t1.translation.y = target_y;
+                    v.linvel.y = 0.0;
                 }
             }
         }

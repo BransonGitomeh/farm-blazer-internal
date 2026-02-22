@@ -1128,7 +1128,12 @@
                 const provider = connectedWalletType === 'phantom' ? window.solana : window.jupiter;
                 if (!provider) throw new Error("Wallet provider not found");
 
-                const transactionBuf = Buffer.from(swapTransaction, 'base64');
+                // Decode base64 swap transaction using browser-native APIs (Buffer is Node.js only)
+                const binaryStr = atob(swapTransaction);
+                const transactionBuf = new Uint8Array(binaryStr.length);
+                for (let i = 0; i < binaryStr.length; i++) {
+                    transactionBuf[i] = binaryStr.charCodeAt(i);
+                }
                 const transaction = solanaWeb3.VersionedTransaction.deserialize(transactionBuf);
 
                 const { signature } = await provider.signAndSendTransaction(transaction);
@@ -1151,6 +1156,10 @@
                 console.error("Purchase failed:", err);
                 buyBtn.innerText = "FAILED";
                 buyBtn.style.color = "#ff3333";
+                // Show error in HUD so it's visible
+                const errorDiv = document.getElementById('hud-error');
+                errorDiv.innerText = err.message || "Purchase failed. See console for details.";
+                errorDiv.style.display = 'block';
                 setTimeout(() => {
                     buyBtn.innerText = originalText;
                     buyBtn.disabled = false;
