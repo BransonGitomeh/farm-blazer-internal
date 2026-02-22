@@ -1408,8 +1408,9 @@ fn setup_game(
     // 4. Spawn Player
     setup_player(&mut commands, &mut meshes, &mut materials, &assets, spawn_pos);
 
-    // 5. Spawn Village
-    setup_starting_village(&mut commands, &mut meshes, &mut materials, Vec3::new(x, target_height, z));
+    // 5. Spawn Village — include the +0.8 hex surface offset (same as spawn_hex line 247)
+    let village_y = target_height + 0.8;
+    setup_starting_village(&mut commands, &mut meshes, &mut materials, Vec3::new(x, village_y, z));
 
     // 6. Spawn Large Water Plane (Sea Level)
     commands.spawn((
@@ -1481,7 +1482,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(12.0, 8.0, 12.0))),
         MeshMaterial3d(storage_mat),
-        Transform::from_translation(center + Vec3::Y * 4.8), // center is at hex base, add 4.0 height + 0.8 hex surface
+        Transform::from_translation(center + Vec3::Y * 6.8), // half-height(4) + surface lift
         StorageBin, Structure, Health { current: 2000.0, max: 2000.0 },
         RigidBody::Fixed, Collider::cuboid(6.0, 4.0, 6.0),
     ));
@@ -1490,7 +1491,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(8.0, 8.0, 8.0))),
         MeshMaterial3d(hut_mat),
-        Transform::from_translation(center + Vec3::new(-12.0, 4.8, -12.0)),
+        Transform::from_translation(center + Vec3::new(-12.0, 6.8, -12.0)),
         BuilderHut { spawn_timer: Timer::from_seconds(5.0, TimerMode::Repeating), worker_count: 0, max_workers: 4 },
         Structure, Health { current: 1000.0, max: 1000.0 },
         RigidBody::Fixed, Collider::cuboid(4.0, 4.0, 4.0),
@@ -1500,7 +1501,7 @@ fn setup_starting_village(
     commands.spawn((
         Mesh3d(meshes.add(Cuboid::new(14.0, 10.0, 14.0))),
         MeshMaterial3d(barracks_mat),
-        Transform::from_translation(center + Vec3::new(14.0, 5.8, -14.0)),
+        Transform::from_translation(center + Vec3::new(14.0, 7.8, -14.0)),
         Barracks { timer: Timer::from_seconds(10.0, TimerMode::Repeating), spawn_drone_next: true },
         Structure, Health { current: 1500.0, max: 1500.0 },
         RigidBody::Fixed, Collider::cuboid(7.0, 5.0, 7.0),
@@ -1511,7 +1512,7 @@ fn setup_starting_village(
         commands.spawn((
             Mesh3d(meshes.add(Cylinder::new(4.0, 8.0))),
             MeshMaterial3d(drill_mat.clone()),
-            Transform::from_translation(center + offset + Vec3::Y * 4.8),
+            Transform::from_translation(center + offset + Vec3::Y * 6.8),
             Drill { timer: Timer::from_seconds(4.0, TimerMode::Repeating), storage: 0 },
             Structure, Health { current: 600.0, max: 600.0 },
             RigidBody::Fixed, Collider::cylinder(4.0, 4.0),
