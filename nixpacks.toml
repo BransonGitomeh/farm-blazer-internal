@@ -8,7 +8,7 @@ cmds = [
     
     # 1. Prepare Directory Structure
     "mkdir -p bin/farm-blazer",
-    "mkdir -p bin/farm-blazer/out/assets",
+    "mkdir -p bin/farm-blazer/assets",
 
     # 2. Download Tools
     "curl -L https://github.com/rustwasm/wasm-bindgen/releases/download/0.2.106/wasm-bindgen-0.2.106-x86_64-unknown-linux-musl.tar.gz | tar xz",
@@ -21,22 +21,21 @@ cmds = [
     # 4. Build WASM
     "cargo build --release --target wasm32-unknown-unknown",
     
-    # 5. Generate JS/WASM Bindings (Forcing hyphen name)
-    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./bin/farm-blazer/out --out-name farm-blazer --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm-blazer.wasm",
+    # 5. Generate JS/WASM Bindings (Placing in root for cleaner paths)
+    "./wasm-bindgen-0.2.106-x86_64-unknown-linux-musl/wasm-bindgen --out-dir ./bin/farm-blazer --out-name farm-blazer --target web --no-typescript ./target/wasm32-unknown-unknown/release/farm-blazer.wasm",
     
     # 6. Optimize WASM
-    "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./bin/farm-blazer/out/farm-blazer_bg.wasm ./bin/farm-blazer/out/farm-blazer_bg.wasm",
+    "wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext -o ./bin/farm-blazer/farm-blazer_bg.wasm ./bin/farm-blazer/farm-blazer_bg.wasm",
     
     # 7. CRITICAL FIX: Create a duplicate without the _bg suffix
-    # This solves the 404 whether the JS looks for farm-blazer.wasm or farm-blazer_bg.wasm
-    "cp bin/farm-blazer/out/farm-blazer_bg.wasm bin/farm-blazer/out/farm-blazer.wasm",
+    "cp bin/farm-blazer/farm-blazer_bg.wasm bin/farm-blazer/farm-blazer.wasm",
 
     # 8. Copy Assets & HTML (Preserving structure)
     "cp -r assets bin/farm-blazer/assets",
     "cp index.html bin/farm-blazer/index.html",
 
     # 9. PRODUCTION COMPRESSION
-    "find bin/farm-blazer/out -type f \\( -name '*.wasm' -o -name '*.js' -o -name '*.html' -o -name '*.glb' \\) -exec brotli --best --keep --force {} +"
+    "find bin/farm-blazer/ -type f \\( -name '*.wasm' -o -name '*.js' -o -name '*.html' -o -name '*.glb' \\) -exec brotli --best --keep --force {} +"
 ]
 
 [start]
