@@ -395,23 +395,40 @@
             box-shadow: 0 0 30px var(--primary);
         }
 
-        /* Commander HUD */
-        #commander-hud {
+        /* HUD Stack */
+        #hud-stack {
             position: fixed;
             top: 20px;
             right: 20px;
             z-index: 500;
+            display: none; /* Shown after boot */
+            flex-direction: column;
+            gap: 15px;
+            align-items: flex-end;
+            pointer-events: none; /* Let clicks pass to world if between panels */
+            max-width: 320px;
+            width: 100%;
+        }
+
+        .hud-panel {
+            pointer-events: auto; /* Buttons clickable */
             background: var(--panel);
             padding: 20px;
-            border: 1px solid var(--gold);
+            border: 1px solid var(--border);
             border-radius: 12px;
             backdrop-filter: blur(20px);
             -webkit-backdrop-filter: blur(20px);
-            min-width: 240px;
-            display: none;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
             border-left: 4px solid var(--primary);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            width: 100%;
             animation: slideInRight 0.5s cubic-bezier(0.17, 0.67, 0.83, 0.67);
+        }
+
+        /* Update Commander HUD to use base panel */
+        #commander-hud {
+            border: 1px solid var(--gold);
+            border-left: 4px solid var(--primary);
+            display: none; /* JS toggles */
         }
 
         @keyframes slideInRight {
@@ -592,28 +609,21 @@
             color: var(--primary);
         }
 
-        /* ---- ONBOARDING OVERLAY ---- */
+        /* ---- ONBOARDING HUD PANEL ---- */
         #onboarding {
-            position: fixed;
-            inset: 0;
-            z-index: 2000;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: rgba(5, 8, 18, 0.92);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            padding: 20px;
+            display: none; /* Controlled by JS */
+            width: 100%;
         }
         .ob-card {
+            /* Inherits hud-panel styles from parent div if we wrap it like that, 
+               but let's keep it self-contained for now */
             background: var(--panel);
             border: 1px solid var(--border);
-            border-radius: 24px;
-            max-width: 480px;
-            width: 100%;
-            padding: 36px 32px 28px;
+            border-left: 4px solid var(--primary);
+            border-radius: 12px;
+            padding: 24px 20px 20px;
             position: relative;
-            box-shadow: 0 30px 80px rgba(0,0,0,0.6), 0 0 60px rgba(153,69,255,0.15);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
             animation: slideUp 0.4s cubic-bezier(0.17, 0.67, 0.83, 0.67);
         }
         .ob-skip {
@@ -799,6 +809,46 @@
             cursor: not-allowed;
             filter: grayscale(1);
         }
+
+        /* --- SOCIAL HUD --- */
+        #social-hud {
+            border-left: 4px solid #1da1f2; /* Twitter Blue */
+        }
+        .social-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: rgba(255,255,255,0.6);
+            margin-bottom: 12px;
+            letter-spacing: 1px;
+        }
+        .social-btns {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .social-btn {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: rgba(255,255,255,0.03);
+            color: white;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .social-btn:hover {
+            background: rgba(255,255,255,0.08);
+            border-color: rgba(255,255,255,0.3);
+            transform: translateX(4px);
+        }
+        .social-btn.google:hover { border-color: #4285F4; color: #4285F4; }
+        .social-btn.x:hover { border-color: #1da1f2; color: #1da1f2; }
+        .social-icon { width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; }
         @media (max-width: 480px) {
             .ob-card { padding: 28px 20px 22px; }
             .ob-title { font-size: 1rem; }
@@ -971,11 +1021,37 @@
             font-size: 0.75rem;
             color: #ff3333;
             margin-top: 10px;
-            text-align: center;
+            text-align: left; /* Better for multiline stack traces */
             background: rgba(255, 51, 51, 0.1);
-            padding: 5px;
-            border-radius: 4px;
+            padding: 8px 12px;
+            border-radius: 8px;
             display: none;
+            cursor: pointer;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            line-height: 1.4;
+            max-height: 3.2em; /* ~2-3 lines */
+            position: relative;
+            border: 1px solid rgba(255, 51, 51, 0.2);
+            word-break: break-all;
+        }
+        .hud-error::after {
+            content: '... [CLICK FOR DETAILS]';
+            position: absolute;
+            bottom: 4px;
+            right: 8px;
+            font-size: 0.6rem;
+            opacity: 0.6;
+            background: rgba(20, 0, 0, 0.8);
+            padding: 0 4px;
+            border-radius: 2px;
+        }
+        .hud-error.expanded {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .hud-error.expanded::after {
+            content: '[CLICK TO FOLD]';
         }
     </style>
 </head>
@@ -987,8 +1063,9 @@
         <div class="particles" id="particles"></div>
     </div>
 
+    <div id="hud-stack">
     <!-- Commander HUD -->
-    <div id="commander-hud">
+    <div id="commander-hud" class="hud-panel">
         <!-- Toggle bar: visible on ≤1024px, replaces header -->
         <div class="hud-toggle-bar" id="hud-toggle-bar">
             <div class="hud-toggle-pill">
@@ -1060,6 +1137,22 @@
             </div>
         </div>
     </div>
+
+    <!-- SOCIAL HUD -->
+    <div id="social-hud" class="hud-panel">
+        <div class="social-title">LINK ACCOUNTS</div>
+        <div class="social-btns">
+            <button class="social-btn google" id="social-google">
+                <span class="social-icon">G</span>
+                <span>Continue with Google</span>
+            </button>
+            <button class="social-btn x" id="social-x">
+                <span class="social-icon">𝕏</span>
+                <span>Continue with X</span>
+            </button>
+        </div>
+    </div>
+</div>
 
     <!-- Landing Page -->
     <div id="landing">
@@ -1259,6 +1352,21 @@
             
             const errorDiv = document.getElementById('hud-error');
             errorDiv.style.display = 'none';
+            errorDiv.classList.remove('expanded');
+
+            function setHudError(msg) {
+                if (!msg) {
+                    errorDiv.style.display = 'none';
+                    return;
+                }
+                errorDiv.innerText = msg;
+                errorDiv.style.display = 'block';
+                errorDiv.classList.remove('expanded'); // Start folded
+                errorDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+
+            // Toggle expansion
+            errorDiv.onclick = () => errorDiv.classList.toggle('expanded');
 
             if (walletConnected && walletAddress) {
                 try {
@@ -1280,8 +1388,7 @@
                     }
                 } catch (e) {
                     console.error("Failed to fetch real balances:", e);
-                    errorDiv.innerText = e.message.includes('403') ? "RPC Rate Limited. Retrying later..." : "Failed to sync balances.";
-                    errorDiv.style.display = 'block';
+                    setHudError(e.message.includes('403') ? "RPC Rate Limited. Retrying later..." : `Failed to sync balances: ${e.message}`);
                 }
             } else {
                 solBalance = 0;
@@ -1382,6 +1489,7 @@
                 
                 setTimeout(() => {
                     loader.remove();
+                    document.getElementById('hud-stack').style.display = 'flex';
                     hud.style.display = 'block';
                     
                     const canvas = document.querySelector('canvas');
@@ -1439,8 +1547,7 @@
             const setFailed = (step, label, reason) => {
                 buyBtn.innerText = `FAILED: ${label}`;
                 buyBtn.style.color = '#ff3333';
-                errorDiv.innerText = `Step ${step} failed — ${reason}`;
-                errorDiv.style.display = 'block';
+                setHudError(`Step ${step} failed — ${reason}`);
             };
 
             try {
@@ -1639,7 +1746,6 @@
         ];
 
         let obStep = 0;
-        let obTimer = null;
 
         function renderOnboarding() {
             const stepsEl = document.getElementById('ob-steps');
@@ -1697,18 +1803,10 @@
         function openOnboarding() {
             obStep = 0;
             renderOnboarding();
-            document.getElementById('onboarding').style.display = 'flex';
-            
-            // Auto-dismiss after 60 seconds of inactivity or just being open
-            if (obTimer) clearTimeout(obTimer);
-            obTimer = setTimeout(() => {
-                console.log("Onboarding auto-dismiss triggered after 60s");
-                closeOnboarding();
-            }, 60000);
+            document.getElementById('onboarding').style.display = 'block';
         }
 
         function closeOnboarding() {
-            if (obTimer) clearTimeout(obTimer);
             document.getElementById('onboarding').style.display = 'none';
             localStorage.setItem('ob_seen', '1');
         }
@@ -1721,6 +1819,16 @@
              setTimeout(updateObActions, 100); // Small delay to catch state
         };
         document.getElementById('ob-buy-btn').onclick = purchaseToken;
+
+        // Social auth wiring
+        document.getElementById('social-google').onclick = () => {
+            console.log("SOCIAL: Google Auth requested");
+            alert("Google Authentication integration coming soon!");
+        };
+        document.getElementById('social-x').onclick = () => {
+            console.log("SOCIAL: X Auth requested");
+            alert("X Authentication integration coming soon!");
+        };
 
         // Wire both ? help buttons
         document.getElementById('hud-help-btn').onclick = openOnboarding;
