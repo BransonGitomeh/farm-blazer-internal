@@ -1106,23 +1106,30 @@
 
             try {
                 // 1. Get Quote (SOL -> HXGME) 0.1 SOL default for purchase
-                const amount = 0.1 * solanaWeb3.LAMPORTS_PER_SOL;
-                const quoteResponse = await fetch(`https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${HXGME_MINT}&amount=${amount}&slippageBps=100`);
-                const quoteData = await quoteResponse.json();
-
-                if (!quoteData || quoteData.error) throw new Error(quoteData?.error || "Failed to get quote");
+                const amount = Math.floor(0.1 * solanaWeb3.LAMPORTS_PER_SOL);
+                const quoteRes = await fetch(
+                    `https://api.jup.ag/swap/v1/quote?inputMint=So11111111111111111111111111111111111111112&outputMint=${HXGME_MINT}&amount=${amount}&slippageBps=300`
+                );
+                if (!quoteRes.ok) throw new Error(`Quote fetch failed: ${quoteRes.status} ${await quoteRes.text()}`);
+                const quoteData = await quoteRes.json();
+                if (quoteData.error) throw new Error(`Quote error: ${quoteData.error}`);
 
                 // 2. Get Swap Transaction
-                const swapResponse = await fetch('https://quote-api.jup.ag/v6/swap', {
+                const swapRes = await fetch('https://api.jup.ag/swap/v1/swap', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         quoteResponse: quoteData,
                         userPublicKey: walletAddress,
                         wrapAndUnwrapSol: true,
+                        dynamicSlippage: true,
+                        dynamicComputeUnitLimit: true,
+                        prioritizationFeeLamports: 'auto',
                     })
                 });
-                const { swapTransaction } = await swapResponse.json();
+                if (!swapRes.ok) throw new Error(`Swap fetch failed: ${swapRes.status} ${await swapRes.text()}`);
+                const { swapTransaction } = await swapRes.json();
+                if (!swapTransaction) throw new Error('No swap transaction returned from Jupiter');
 
                 // 3. Request Signature from Wallet
                 const provider = connectedWalletType === 'phantom' ? window.solana : window.jupiter;
