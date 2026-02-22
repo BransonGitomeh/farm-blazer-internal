@@ -671,6 +671,17 @@
         #landing, #loader {
             display: none !important;
         }
+
+        .hud-error {
+            font-size: 0.75rem;
+            color: #ff3333;
+            margin-top: 10px;
+            text-align: center;
+            background: rgba(255, 51, 51, 0.1);
+            padding: 5px;
+            border-radius: 4px;
+            display: none;
+        }
     </style>
 </head>
 <body>
@@ -712,6 +723,8 @@
             <span class="hud-label">MCAP</span>
             <span class="hud-value" id="hud-mcap">$2.7K</span>
         </div>
+
+        <div id="hud-error" class="hud-error"></div>
 
         <div class="hud-actions">
             <button id="hud-connect-btn" class="hud-btn connect">CONNECT</button>
@@ -826,7 +839,7 @@
         let modalShown = false;
         const MODAL_THRESHOLD = 50; 
         const HXGME_MINT = "8p2K9VoAy6bQgh83M1mFrrsuStw5MtEPnLXkyn7cpump";
-        const RPC_ENDPOINT = "https://api.mainnet-beta.solana.com";
+        const RPC_ENDPOINT = "https://mainnet.helius-rpc.com/?api-key=ee9ffc67-22a1-40e2-aa38-7eef9bccbc61";
         const solanaConnection = new solanaWeb3.Connection(RPC_ENDPOINT);
 
         // Multi-Wallet Detection
@@ -887,7 +900,33 @@
             }
         }
 
+        async function disconnectWallet() {
+            try {
+                const provider = connectedWalletType === 'phantom' ? window.solana : window.jupiter;
+                if (provider) {
+                    await provider.disconnect();
+                }
+            } catch(e) {
+                console.warn('Disconnect error:', e);
+            }
+            walletConnected = false;
+            walletAddress = null;
+            solBalance = 0;
+            hxgmeBalance = 0;
+            connectedWalletType = null;
+            document.getElementById('hud-error').style.display = 'none';
+
+            connectBtn.innerText = 'CONNECT WALLET';
+            connectBtn.style.background = 'transparent';
+            walletStatus.style.display = 'none';
+
+            await updateTokenBalance();
+        }
+
         async function updateTokenBalance() {
+            const errorDiv = document.getElementById('hud-error');
+            errorDiv.style.display = 'none';
+
             if (walletConnected && walletAddress) {
                 try {
                     const publicKey = new solanaWeb3.PublicKey(walletAddress);
@@ -908,6 +947,8 @@
                     }
                 } catch (e) {
                     console.error("Failed to fetch real balances:", e);
+                    errorDiv.innerText = e.message.includes('403') ? "RPC Rate Limited. Retrying later..." : "Failed to sync balances.";
+                    errorDiv.style.display = 'block';
                 }
             } else {
                 solBalance = 0;
@@ -926,10 +967,10 @@
 
             if (walletConnected) {
                 hudStatusLed.classList.add('online');
-                hudConnectBtn.style.display = 'none';
+                hudConnectBtn.innerText = 'DISCONNECT';
             } else {
                 hudStatusLed.classList.remove('online');
-                hudConnectBtn.style.display = 'block';
+                hudConnectBtn.innerText = 'CONNECT';
             }
 
             updateBuffDisplay();
@@ -1115,8 +1156,8 @@
             }
         }
 
-        connectBtn.onclick = () => connectWallet(false);
-        hudConnectBtn.onclick = () => connectWallet(false);
+        connectBtn.onclick = () => { walletConnected ? disconnectWallet() : connectWallet(false) };
+        hudConnectBtn.onclick = () => { walletConnected ? disconnectWallet() : connectWallet(false) };
         hudBuyBtn.onclick = purchaseToken;
         document.getElementById('buy-token-btn').onclick = purchaseToken;
         document.getElementById('dismiss-modal').onclick = hidePurchaseModal;
